@@ -1,0 +1,10 @@
+const express = require('express');
+const router = express.Router();
+const upload = require('../middleware/upload');
+const { createQuizFromImage } = require('../controllers/quizFromImageController.xxx');
+
+router.post('/from-image', upload.single('photo'), createQuizFromImage);
+
+module.exports = router;
+
+

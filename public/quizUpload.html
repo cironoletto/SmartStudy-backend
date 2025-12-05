@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Upload Quiz da Immagini</title>
+<style>
+  body { font-family: Arial, sans-serif; padding: 20px; }
+  .preview img { width: 100px; margin: 5px; border: 1px solid #ccc; border-radius: 5px; }
+  #progressContainer { width: 100%; background: #eee; border-radius: 5px; margin-top: 10px; }
+  #progressBar { width: 0%; height: 20px; background: #4caf50; border-radius: 5px; }
+</style>
+</head>
+<body>
+
+<h2>Carica immagini per generare quiz</h2>
+
+<input type="file" id="imageInput" multiple accept="image/*">
+<div class="preview" id="preview"></div>
+
+<button id="uploadBtn">Genera Quiz</button>
+
+<div id="progressContainer">
+  <div id="progressBar"></div>
+</div>
+
+<div id="status"></div>
+
+<script>
+const imageInput = document.getElementById('imageInput');
+const preview = document.getElementById('preview');
+const uploadBtn = document.getElementById('uploadBtn');
+const progressBar = document.getElementById('progressBar');
+const statusDiv = document.getElementById('status');
+
+// Anteprima immagini
+imageInput.addEventListener('change', () => {
+  preview.innerHTML = '';
+  Array.from(imageInput.files).forEach(file => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = document.createElement('img');
+      img.src = e.target.result;
+      preview.appendChild(img);
+    };
+    reader.readAsDataURL(file);
+  });
+});
+
+// Upload e SSE
+uploadBtn.addEventListener('click', () => {
+  if (!imageInput.files.length) {
+    alert('Seleziona almeno una immagine');
+    return;
+  }
+
+  const formData = new FormData();
+  Array.from(imageInput.files).forEach(file => formData.append('images', file));
+
+  const evtSource = new EventSourcePolyfill('/api/quiz/from-images-sse?' + new URLSearchParams(), {
+    method: 'POST',
+    body: formData
+  });
+
+  // Aggiorna progress bar con SSE
+  evtSource.onmessage = event => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.progress !== undefined) {
+        progressBar.style.width = (data.progress * 100) + '%';
+      }
+      if (data.message) {
+        statusDiv.textContent = data.message;
+      }
+    } catch(err) {
+      console.error('Errore parsing SSE:', err);
+    }
+  };
+
+  evtSource.onerror = () => {
+    statusDiv.textContent = 'Errore di connessione o completamento SSE.';
+    evtSource.close();
+  };
+});
+
+/* Polyfill EventSource per POST e FormData (browser mobile) */
+function EventSourcePolyfill(url, options = {}) {
+  const xhr = new XMLHttpRequest();
+  const listeners = { message: [] };
+
+  const es = {
+    addEventListener: (type, cb) => { if(listeners[type]) listeners[type].push(cb); },
+    close: () => xhr.abort()
+  };
+
+  xhr.onreadystatechange = () => {
+    if (xhr.readyState === 3) {
+      const lines = xhr.responseText.split('\n');
+      lines.forEach(line => {
+        if (line.startsWith('data:')) {
+          const data = line.replace('data:','').trim();
+          listeners.message.forEach(cb => cb({ data }));
+        }
+      });
+    }
+  };
+
+  xhr.open('POST', url, true);
+  if (options.body) xhr.send(options.body);
+
+  return es;
+}
+</script>
+
+</body>
+</html>
