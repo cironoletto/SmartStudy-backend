@@ -1,5 +1,9 @@
 // backend/index.js
 require('dotenv').config();
+console.log("ENV CHECK:", {
+  OPENAI: process.env.OPENAI_API_KEY ? "LOADED" : "MISSING",
+  DB: process.env.DB_USER ? "LOADED" : "MISSING"
+});
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
