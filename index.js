@@ -1,5 +1,5 @@
 // backend/index.js
-require('dotenv').config();
+//require('dotenv').config();
 console.log("ENV CHECK:", {
   OPENAI: process.env.OPENAI_API_KEY ? "LOADED" : "MISSING",
   DB: process.env.DB_USER ? "LOADED" : "MISSING"
