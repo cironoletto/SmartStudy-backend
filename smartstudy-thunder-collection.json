@@ -1,0 +1,76 @@
+{
+  "client": "Thunder Client",
+  "collectionName": "SmartStudy API",
+  "dateExported": "2025-12-08",
+  "requests": [
+    {
+      "name": "Register User",
+      "method": "POST",
+      "url": "http://localhost:4000/api/auth/register",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"username\": \"mario\",\n  \"password\": \"12345\",\n  \"fullName\": \"Mario Rossi\"\n}"
+      }
+    },
+    {
+      "name": "Login",
+      "method": "POST",
+      "url": "http://localhost:4000/api/auth/login",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"username\": \"mario\",\n  \"password\": \"12345\"\n}"
+      }
+    },
+    {
+      "name": "Me (Authenticated)",
+      "method": "GET",
+      "url": "http://localhost:4000/api/auth/me",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{token}}" }
+      ]
+    },
+    {
+      "name": "Get User Quizzes",
+      "method": "GET",
+      "url": "http://localhost:4000/api/quiz",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{token}}" }
+      ]
+    },
+    {
+      "name": "Create Quiz From Images",
+      "method": "POST",
+      "url": "http://localhost:4000/api/quiz/from-images",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{token}}" }
+      ],
+      "body": {
+        "type": "formdata",
+        "form": [
+          { "name": "images", "value": "", "type": "file" }
+        ]
+      }
+    },
+    {
+      "name": "Study From Images",
+      "method": "POST",
+      "url": "http://localhost:4000/api/study/from-images",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{token}}" }
+      ],
+      "body": {
+        "type": "formdata",
+        "form": [
+          { "name": "mode", "value": "summary" },
+          { "name": "images", "value": "", "type": "file" }
+        ]
+      }
+    }
+  ]
+}

@@ -1,248 +1,238 @@
-const { getConnection, sql } = require("../db");
+const db = require("../db");
 
-/**
- * Crea un quiz + domande in un'unica transazione
- */
+/* -----------------------------------------------------------
+   CREA QUIZ + DOMANDE (TRANSAZIONE POSTGRESQL)
+------------------------------------------------------------ */
 exports.createQuizWithQuestions = async (quizData) => {
-  console.log("📌 createQuizWithQuestions START");
-  console.log("quizData:", JSON.stringify(quizData, null, 2));
-
-  const pool = await getConnection();
-  const transaction = new sql.Transaction(pool);
-  await transaction.begin();
+  const client = await db.pool.connect();
 
   try {
-    console.log("📌 INSERT QUIZ...");
+    await client.query("BEGIN");
 
-    // 🔥 Request VA RICREAT0 per ogni query nella transaction
-    let reqQuiz = new sql.Request(transaction);
+    // 1️⃣ Inserisci quiz
+    const quizInsert = await client.query(
+      `
+      INSERT INTO quizzes (userid, title, description, createdat)
+      VALUES ($1, $2, $3, NOW())
+      RETURNING quizid
+      `,
+      [quizData.userID, quizData.title, quizData.description]
+    );
 
-    const quizResult = await reqQuiz.query(`
-      INSERT INTO Quizzes (UserID, Title, Description, CreatedAt)
-      OUTPUT INSERTED.QuizID
-      VALUES (
-        ${quizData.userID},
-        N'${quizData.title.replace(/'/g, "''")}',
-        N'${quizData.description.replace(/'/g, "''")}',
-        GETDATE()
-      )
-    `);
+    const quizID = quizInsert.rows[0].quizid;
 
-    const quizID = quizResult.recordset[0].QuizID;
-    console.log("📌 QUIZ ID:", quizID);
-
-    console.log("📌 INSERT QUESTIONS:", quizData.questions.length);
-
-    // 🔥 Ciclo domande
+    // 2️⃣ Inserisci domande
     for (const q of quizData.questions) {
-      console.log("➡️ inserting question:", q.text);
-
       const type = q.type || "mcq";
-      const text = q.text || "";
       const points = q.points || 1;
 
-      const choicesJson =
-        type === "mcq" && Array.isArray(q.choices)
-          ? JSON.stringify(q.choices).replace(/'/g, "''")
-          : null;
-
+      let choices = null;
       let correctAnswer = null;
-      if (type === "mcq" && typeof q.correctIndex === "number") {
-        correctAnswer = String(q.correctIndex);
-      } else if (type === "open" && q.idealAnswer) {
-        correctAnswer = q.idealAnswer;
+
+      if (type === "mcq") {
+        choices = Array.isArray(q.choices) ? JSON.stringify(q.choices) : null;
+        correctAnswer =
+          typeof q.correctIndex === "number"
+            ? String(q.correctIndex)
+            : null;
+      } else if (type === "open") {
+        correctAnswer = q.idealAnswer || null;
       }
 
-      // 🔥 NUOVO request ad ogni ciclo
-      let reqQ = new sql.Request(transaction);
-
-      await reqQ.query(`
-        INSERT INTO Questions 
-        (QuizID, QuestionText, QuestionType, ChoicesJSON, CorrectAnswer, Points)
-        VALUES (
-          ${quizID},
-          N'${text.replace(/'/g, "''")}',
-          '${type}',
-          ${choicesJson ? `N'${choicesJson}'` : "NULL"},
-          ${correctAnswer ? `N'${correctAnswer.replace(/'/g, "''")}'` : "NULL"},
-          ${points}
-        )
-      `);
+      await client.query(
+        `
+        INSERT INTO questions
+          (quizid, questiontext, questiontype, choicesjson, correctanswer, points)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        `,
+        [
+          quizID,
+          q.text || "",
+          type,
+          choices,
+          correctAnswer,
+          points,
+        ]
+      );
     }
 
-    await transaction.commit();
-    console.log("📌 TRANSACTION COMMITTED");
+    await client.query("COMMIT");
     return quizID;
 
   } catch (err) {
-    console.log("💥 DB QUIZ TRANSACTION ERROR:", err);
-    await transaction.rollback();
+    await client.query("ROLLBACK");
+    console.error("❌ PG TRANSACTION ERROR:", err);
     throw err;
+  } finally {
+    client.release();
   }
 };
 
-/**
- * Ritorna tutti i quiz dell'utente
- */
+/* -----------------------------------------------------------
+   QUIZ BY USER
+------------------------------------------------------------ */
 exports.getQuizzesByUser = async (userID) => {
-  const pool = await getConnection();
-  const result = await pool.request().query(`
-    SELECT QuizID, Title, Description, CreatedAt
-    FROM Quizzes
-    WHERE UserID = ${userID}
-    ORDER BY CreatedAt DESC
-  `);
-  return result.recordset;
+  const result = await db.query(
+    `
+    SELECT quizid, title, description, createdat
+    FROM quizzes
+    WHERE userid = $1
+    ORDER BY createdat DESC
+    `,
+    [userID]
+  );
+
+  return result.rows;
 };
 
-/**
- * Restituisce quiz + domande
- */
+/* -----------------------------------------------------------
+   QUIZ + DOMANDE
+------------------------------------------------------------ */
 exports.getQuizWithQuestions = async (quizID, userID) => {
-  const pool = await getConnection();
+  const quiz = await db.query(
+    `
+    SELECT quizid, userid, title, description, createdat
+    FROM quizzes
+    WHERE quizid = $1
+    `,
+    [quizID]
+  );
 
-  const quizResult = await pool.request().query(`
-    SELECT QuizID, UserID, Title, Description, CreatedAt
-    FROM Quizzes
-    WHERE QuizID = ${quizID}
-  `);
+  if (quiz.rows.length === 0) return null;
+  if (quiz.rows[0].userid !== userID) return null;
 
-  if (quizResult.recordset.length === 0) return null;
-
-  const quiz = quizResult.recordset[0];
-  if (quiz.UserID !== userID) return null;
-
-  const questionsResult = await pool.request().query(`
-    SELECT QuestionID, QuestionText, QuestionType, ChoicesJSON, CorrectAnswer, Points
-    FROM Questions
-    WHERE QuizID = ${quizID}
-    ORDER BY QuestionID
-  `);
+  const q = await db.query(
+    `
+    SELECT questionid, questiontext, questiontype, choicesjson, correctanswer, points
+    FROM questions
+    WHERE quizid = $1
+    ORDER BY questionid
+    `,
+    [quizID]
+  );
 
   return {
-    quiz,
-    questions: questionsResult.recordset.map((q) => ({
-      questionID: q.QuestionID,
-      text: q.QuestionText,
-      type: q.QuestionType,
-      choices: q.ChoicesJSON ? JSON.parse(q.ChoicesJSON) : null,
-      correctAnswer: q.CorrectAnswer,
-      points: q.Points,
+    quiz: quiz.rows[0],
+    questions: q.rows.map((x) => ({
+      questionID: x.questionid,
+      text: x.questiontext,
+      type: x.questiontype,
+      choices: x.choicesjson ? JSON.parse(x.choicesjson) : null,
+      correctAnswer: x.correctanswer,
+      points: x.points,
     })),
   };
 };
 
-/**
- * createAttempt
- */
+/* -----------------------------------------------------------
+   CREATE ATTEMPT
+------------------------------------------------------------ */
 exports.createAttempt = async (quizID, userID) => {
-  const pool = await getConnection();
+  const insert = await db.query(
+    `
+    INSERT INTO attempts (quizid, userid, startedat)
+    VALUES ($1, $2, NOW())
+    RETURNING attemptid
+    `,
+    [quizID, userID]
+  );
 
-  const result = await pool.request().query(`
-    INSERT INTO Attempts (QuizID, UserID, StartedAt)
-    OUTPUT INSERTED.AttemptID
-    VALUES (${quizID}, ${userID}, GETDATE())
-  `);
-
-  return result.recordset[0].AttemptID;
+  return insert.rows[0].attemptid;
 };
 
-/**
- * saveAnswersAndScore
- */
+/* -----------------------------------------------------------
+   SAVE ANSWERS & SCORE (TRANSAZIONE PG)
+------------------------------------------------------------ */
 exports.saveAnswersAndScore = async (quizID, attemptID, userID, answers) => {
-  const pool = await getConnection();
-  const transaction = new sql.Transaction(pool);
-  await transaction.begin();
+  const client = await db.pool.connect();
 
   try {
-    const req = new sql.Request(transaction);
+    await client.query("BEGIN");
 
-    const qRes = await req.query(`
-      SELECT QuestionID, QuestionType, CorrectAnswer, Points
-      FROM Questions
-      WHERE QuizID = ${quizID}
-    `);
+    // Fetch domande
+    const qRes = await client.query(
+      `
+      SELECT questionid, questiontype, correctanswer, points
+      FROM questions
+      WHERE quizid = $1
+      `,
+      [quizID]
+    );
 
     const qMap = new Map();
-    qRes.recordset.forEach((q) => {
-      qMap.set(q.QuestionID, {
-        type: q.QuestionType,
-        correctAnswer: q.CorrectAnswer,
-        points: q.Points || 1,
+    qRes.rows.forEach((q) => {
+      qMap.set(q.questionid, {
+        type: q.questiontype,
+        correctAnswer: q.correctanswer,
+        points: q.points || 1,
       });
     });
 
     let totalScore = 0;
     let maxScore = 0;
 
+    // Inserisci risposte
     for (const ans of answers) {
       const meta = qMap.get(ans.questionID);
       if (!meta) continue;
 
       maxScore += meta.points;
 
-      let isCorrect = null;
+      let isCorrect = false;
       let score = 0;
 
       if (meta.type === "mcq") {
         const correctIndex =
-          meta.correctAnswer != null ? parseInt(meta.correctAnswer, 10) : null;
+          meta.correctAnswer != null ? parseInt(meta.correctAnswer) : null;
 
-        if (
-          typeof ans.selectedIndex === "number" &&
-          correctIndex !== null &&
-          ans.selectedIndex === correctIndex
-        ) {
-          isCorrect = 1;
+        if (ans.selectedIndex === correctIndex) {
+          isCorrect = true;
           score = meta.points;
-        } else {
-          isCorrect = 0;
         }
       }
 
-      totalScore += score;
+      await client.query(
+        `
+        INSERT INTO answers (attemptid, questionid, answertext, iscorrect, score)
+        VALUES ($1, $2, $3, $4, $5)
+        `,
+        [
+          attemptID,
+          ans.questionID,
+          ans.answerText || null,
+          isCorrect,
+          score,
+        ]
+      );
 
-      let reqAns = new sql.Request(transaction);
-      await reqAns.query(`
-        INSERT INTO Answers (AttemptID, QuestionID, AnswerText, IsCorrect, Score)
-        VALUES (
-          ${attemptID},
-          ${ans.questionID},
-          ${
-            ans.answerText
-              ? `N'${ans.answerText.replace(/'/g, "''")}'`
-              : "NULL"
-          },
-          ${isCorrect === null ? "NULL" : isCorrect},
-          ${score}
-        )
-      `);
+      totalScore += score;
     }
 
     const percentage = maxScore > 0 ? totalScore / maxScore : 0;
-    const isPassed = percentage >= 0.6 ? 1 : 0;
+    const isPassed = percentage >= 0.6;
 
-    let reqUpdate = new sql.Request(transaction);
-    await reqUpdate.query(`
-      UPDATE Attempts
-      SET CompletedAt = GETDATE(),
-          Score = ${totalScore},
-          MaxScore = ${maxScore},
-          IsPassed = ${isPassed}
-      WHERE AttemptID = ${attemptID} AND UserID = ${userID}
-    `);
+    await client.query(
+      `
+      UPDATE attempts
+      SET completedat = NOW(),
+          score = $1,
+          maxscore = $2,
+          ispassed = $3
+      WHERE attemptid = $4 AND userid = $5
+      `,
+      [totalScore, maxScore, isPassed, attemptID, userID]
+    );
 
-    await transaction.commit();
+    await client.query("COMMIT");
 
-    return {
-      totalScore,
-      maxScore,
-      percentage,
-      isPassed: !!isPassed,
-    };
+    return { totalScore, maxScore, percentage, isPassed };
+
   } catch (err) {
-    await transaction.rollback();
+    await client.query("ROLLBACK");
+    console.error("❌ saveAnswersAndScore ERROR:", err);
     throw err;
+
+  } finally {
+    client.release();
   }
 };

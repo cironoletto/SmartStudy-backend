@@ -24,7 +24,9 @@ exports.getQuizById = async (req, res) => {
   try {
     const userID = req.user.userId;
     const quizID = parseInt(req.params.quizID, 10);
+
     const data = await quizModel.getQuizWithQuestions(quizID, userID);
+
     if (!data) return res.status(404).json({ error: "Quiz non trovato" });
     res.json(data);
   } catch (err) {
@@ -52,7 +54,6 @@ exports.startQuizAttempt = async (req, res) => {
 
 /**
  * POST /api/quiz/:quizID/attempt/:attemptID/answers
- * Body: { answers: [{ questionID, type, selectedIndex?, answerText? }] }
  */
 exports.submitQuizAnswers = async (req, res) => {
   try {
@@ -81,12 +82,12 @@ exports.submitQuizAnswers = async (req, res) => {
 
 /**
  * GET /api/quiz/:quizID/attempts
- * Storico tentativi per quel quiz
  */
 exports.getQuizAttempts = async (req, res) => {
   try {
     const userID = req.user.userId;
     const quizID = parseInt(req.params.quizID, 10);
+
     const attempts = await quizModel.getAttemptsForQuiz(quizID, userID);
     res.json(attempts);
   } catch (err) {

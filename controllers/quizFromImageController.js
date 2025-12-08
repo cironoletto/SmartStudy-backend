@@ -1,73 +1,59 @@
-const Tesseract = require('tesseract.js');
-const path = require('path');
-const fs = require('fs');
-const { createQuiz, addQuestion, addAnswer } = require('../models/quizModel');
+// controllers/legacyCreateQuizFromImage.js
+const { extractTextFromImages } = require("./localOCR");
+const quizModel = require("../models/quizModel");
+const OpenAI = require("openai");
 
-// Funzione robusta per il parsing del testo OCR in domande e risposte
-function parseOCRTextToQuiz(text) {
-  const questionRegex = /(?:Domanda\s*\d+[:.]?)([\s\S]*?)(?=(Domanda\s*\d+[:.]?|$))/gi;
-  const questions = [];
-  let match;
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
 
-  while ((match = questionRegex.exec(text)) !== null) {
-    const block = match[1].trim();
-    const lines = block.split('\n').map(l => l.trim()).filter(l => l);
-
-    if (lines.length === 0) continue;
-
-    const qText = lines[0]; // prima linea = domanda
-    const answers = [];
-
-    for (let i = 1; i < lines.length; i++) {
-      const aMatch = /^[a-d]\)\s*(.*)/i.exec(lines[i]);
-      if (aMatch) {
-        const answerText = aMatch[1].replace(/\*$/, '').trim();
-        const isCorrect = /\*$/.test(aMatch[1]);
-        answers.push({ text: answerText, isCorrect });
-      }
-    }
-
-    if (answers.length > 0) questions.push({ text: qText, answers });
-  }
-
-  return questions;
-}
-
-async function createQuizFromImage(req, res) {
-  if (!req.file) return res.status(400).json({ error: 'Nessuna immagine caricata' });
-
+exports.createQuizFromImage = async (req, res) => {
   try {
-    const imagePath = path.resolve(req.file.path);
+    const userID = req.user.userId;
+    if (!req.file) return res.status(400).json({ error: "Nessuna immagine caricata" });
 
-    // OCR con Tesseract.js, ignorando warning su file opzionali
-    const { data: { text } } = await Tesseract.recognize(imagePath, 'ita', {
-      logger: m => console.log(m), // log OCR in console
+    const rawText = await extractTextFromImages([req.file]);
+
+    const prompt = `
+Genera un quiz in formato JSON:
+
+{
+  "title": "...",
+  "description": "...",
+  "questions": [
+    {
+      "type": "mcq" | "open",
+      "text": "...",
+      "choices": ["A","B","C","D"],
+      "correctIndex": 1,
+      "idealAnswer": "...",
+      "points": 1
+    }
+  ]
+}
+`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: prompt },
+        { role: "user", content: rawText }
+      ]
     });
 
-    console.log('Testo OCR:', text);
+    const quizJson = JSON.parse(completion.choices[0].message.content);
 
-    // Parsing domande/risposte
-    const questions = parseOCRTextToQuiz(text);
-    if (questions.length === 0) return res.status(400).json({ error: 'Nessuna domanda trovata nel testo OCR' });
+    const quizID = await quizModel.createQuizWithQuestions({
+      userID,
+      title: quizJson.title,
+      description: quizJson.description,
+      questions: quizJson.questions
+    });
 
-    // Creazione quiz nel DB
-    const quizID = await createQuiz('Quiz da foto', 'Quiz generato automaticamente da immagine');
-
-    for (const q of questions) {
-      const questionID = await addQuestion(quizID, q.text, imagePath);
-      for (const a of q.answers) {
-        await addAnswer(questionID, a.text, a.isCorrect);
-      }
-    }
-
-    res.json({ message: 'Quiz creato dalla foto', quizID, questions });
+    res.json({ quizID });
   } catch (err) {
-    console.error('Errore OCR/quiz:', err);
-    res.status(500).json({ error: 'Impossibile creare quiz dalla foto: ' + err.message });
-  } finally {
-    // Opzionale: elimina immagine temporanea
-    // fs.unlinkSync(req.file.path);
+    console.error("createQuizFromImage ERROR:", err);
+    res.status(500).json({ error: err.message });
   }
-}
-
-module.exports = { createQuizFromImage };
+};

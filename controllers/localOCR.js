@@ -1,7 +1,10 @@
 // controllers/localOCR.js
+// controllers/localOCR.js
 const { createWorker } = require("tesseract.js");
 
-// Timeout helper
+/* ----------------------------------------------
+   ⏳ Promise Timeout Helper
+---------------------------------------------- */
 function withTimeout(promise, ms) {
   return Promise.race([
     promise,
@@ -11,53 +14,74 @@ function withTimeout(promise, ms) {
   ]);
 }
 
-// 🔥 CREA UN SOLO WORKER (più veloce e stabile)
+/* ----------------------------------------------
+   🔥 SINGLETON WORKER (eng)
+---------------------------------------------- */
 let workerInstance = null;
+let workerBusy = false;
 
 async function getWorker() {
   if (!workerInstance) {
-    console.log("🟦 OCR: creating worker (eng only)...");
-    workerInstance = await createWorker("eng"); // niente ITA → non installata
+    console.log("🟦 OCR: starting worker (eng)...");
+    workerInstance = await createWorker("eng");
   }
   return workerInstance;
 }
 
-// 🔥 OCR per singola immagine con protezioni
+/* ----------------------------------------------
+   📸 OCR for a single image (with retry)
+---------------------------------------------- */
 async function extractTextFromImage(filePath) {
-  try {
-    const worker = await getWorker();
+  let attempt = 1;
 
-    const { data } = await withTimeout(
-      worker.recognize(filePath),
-      5000 // timeout 5s per immagine
-    );
+  while (attempt <= 2) {
+    try {
+      const worker = await getWorker();
 
-    return data.text || "";
-  } catch (err) {
-    console.error("⚠️ OCR ERROR for image:", filePath, err.message);
-    return ""; // fallback, mai bloccare
+      const { data } = await withTimeout(
+        worker.recognize(filePath),
+        15000 // 15 seconds timeout per image
+      );
+
+      return data.text || "";
+
+    } catch (err) {
+      console.error(`⚠️ OCR ERROR (attempt ${attempt}) on`, filePath, err.message);
+
+      // retry once
+      if (attempt === 1) {
+        attempt++;
+        continue;
+      }
+
+      return ""; // fallback
+    }
   }
 }
 
-// 🔥 OCR multiplo sicuro
+/* ----------------------------------------------
+   🧩 OCR for multiple images
+---------------------------------------------- */
 exports.extractTextFromImages = async (files) => {
-  let finalText = "";
+  let resultText = "";
 
   for (const f of files) {
     const text = await extractTextFromImage(f.path);
-    finalText += "\n" + text;
+    resultText += "\n" + text;
   }
 
-  console.log("🟩 OCR DONE, total chars:", finalText.length);
+  console.log("🟩 OCR COMPLETED → chars:", resultText.length);
 
-  return finalText.trim();
+  return resultText.trim();
 };
 
-// 🔥 chiusura manuale per debug (non obbligatoria)
+/* ----------------------------------------------
+   🧹 Close worker (optional)
+---------------------------------------------- */
 exports.closeOCR = async () => {
   if (workerInstance) {
+    console.log("🟥 Shutting down OCR worker...");
     await workerInstance.terminate();
     workerInstance = null;
-    console.log("🟥 OCR worker terminated");
   }
 };

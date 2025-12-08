@@ -1,45 +1,47 @@
-const { getConnection, sql } = require("../db");
+const db = require("../db");
 
-// ------------------- CREATE USER -------------------
+/* ----------------------------------------------
+   CREATE USER
+---------------------------------------------- */
 exports.createUser = async (username, passwordHash, fullName) => {
-  const pool = await getConnection(); // ✔️ ottieni connessione
-
-  await pool.request()
-    .input("Username", sql.NVarChar, username)
-    .input("PasswordHash", sql.NVarChar, passwordHash)
-    .input("FullName", sql.NVarChar, fullName || null)
-    .query(`
-      INSERT INTO Users (Username, PasswordHash, FullName, CreatedAt)
-      VALUES (@Username, @PasswordHash, @FullName, GETDATE())
-    `);
+  await db.query(
+    `
+    INSERT INTO users (username, passwordhash, fullname, createdat)
+    VALUES ($1, $2, $3, NOW())
+    `,
+    [username, passwordHash, fullName || null]
+  );
 };
 
-// ------------------- GET USER BY USERNAME -------------------
+/* ----------------------------------------------
+   GET USER BY USERNAME
+---------------------------------------------- */
 exports.getUserByUsername = async (username) => {
-  const pool = await getConnection(); // ✔️ ottieni connessione
+  const result = await db.query(
+    `
+    SELECT userid, username, passwordhash, fullname
+    FROM users
+    WHERE username = $1
+    LIMIT 1
+    `,
+    [username]
+  );
 
-  const result = await pool.request()
-    .input("Username", sql.NVarChar, username)
-    .query(`
-      SELECT TOP 1 UserID, Username, PasswordHash, FullName
-      FROM Users
-      WHERE Username = @Username
-    `);
-
-  return result.recordset[0] || null;
+  return result.rows[0] || null;
 };
 
-// ------------------- GET USER BY ID -------------------
+/* ----------------------------------------------
+   GET USER BY ID
+---------------------------------------------- */
 exports.getUserById = async (userId) => {
-  const pool = await getConnection(); // ✔️ ottieni connessione
+  const result = await db.query(
+    `
+    SELECT userid, username, passwordhash, fullname
+    FROM users
+    WHERE userid = $1
+    `,
+    [userId]
+  );
 
-  const result = await pool.request()
-    .input("UserID", sql.Int, userId)
-    .query(`
-      SELECT UserID, Username, PasswordHash, FullName
-      FROM Users
-      WHERE UserID = @UserID
-    `);
-
-  return result.recordset[0] || null;
+  return result.rows[0] || null;
 };
