@@ -18,13 +18,16 @@ const path = require("path");
 const { pool } = require("./db"); // PostgreSQL pool
 
 const app = express();
-const PORT = process.env.PORT || 4000;
+
+// 🚨 IMPORTANTISSIMO: Railway NON permette default !!!  
+// Devi usare SOLO process.env.PORT
+const PORT = process.env.PORT;
 
 // ======================================================
-// 🛠 CORS CONFIG (FONDAMENTALE PER TESTFLIGHT)
+// 🛠 CORS CONFIG
 // ======================================================
 app.use(cors({
-  origin: "*",   // puoi restringerlo in futuro
+  origin: "*",
   methods: "GET,POST,PUT,DELETE,OPTIONS",
   allowedHeaders: "Content-Type, Authorization"
 }));
@@ -86,5 +89,5 @@ app.get("/", (req, res) =>
 // 🚀 AVVIO SERVER (CORRETTO PER RAILWAY)
 // ======================================================
 app.listen(PORT, () => {
-  console.log(`🚀 Server avviato correttamente sulla porta ${PORT} (0.0.0.0)`);
+  console.log(`🚀 Server avviato correttamente sulla porta ${PORT}`);
 });
