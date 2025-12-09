@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "034f079a-9328-4f39-9481-5cafb3c8ca1d"
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "com.noletto.smartstudybackend",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    }
+  }
+}

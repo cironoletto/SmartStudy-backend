@@ -15,55 +15,59 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 
-const { pool } = require("./db"); // <-- PostgreSQL pool
+const { pool } = require("./db"); // PostgreSQL pool
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+
+// ======================================================
+// 🛠 CORS CONFIG (FONDAMENTALE PER TESTFLIGHT)
+// ======================================================
+app.use(cors({
+  origin: "*",   // puoi restringerlo in futuro
+  methods: "GET,POST,PUT,DELETE,OPTIONS",
+  allowedHeaders: "Content-Type, Authorization"
+}));
 
 // ======================================================
 // 🛠 MIDDLEWARE BASE
 // ======================================================
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true, limit: "20mb" }));
-app.use(cors());
 
-// Esposizione cartelle statiche
+// Static files
 app.use("/audio", express.static(path.join(__dirname, "audio")));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use(express.static(path.join(__dirname, "public")));
 
-// Timeout esteso
+// Timeout
 app.use((req, res, next) => {
-  res.setTimeout(120000); // 120 secondi
+  res.setTimeout(120000);
   next();
 });
 
 // ======================================================
-// 📌 ROUTES API
+// 📌 ROUTES
 // ======================================================
 app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/quiz", require("./routes/quizRoutes"));
 app.use("/api/notes", require("./routes/notesRoutes"));
 app.use("/api/questions", require("./routes/questionImageRoutes"));
 app.use("/api/ocr", require("./routes/ocrRoutes"));
-app.use("/api/study", require("./routes/studyRoutes")); // nuovo modulo
+app.use("/api/study", require("./routes/studyRoutes"));
 
 // ======================================================
-// 🔍 DEBUG ROUTES (PostgreSQL version)
+// 🔍 DEBUG
 // ======================================================
-
-// 🔧 Lista colonne Tabelle
 app.get("/debug/columns/:table", async (req, res) => {
   try {
     const table = req.params.table;
-
     const result = await pool.query(
       `SELECT column_name 
        FROM information_schema.columns 
        WHERE table_name = $1`,
       [table.toLowerCase()]
     );
-
     res.json(result.rows);
   } catch (err) {
     console.error("DEBUG ERROR:", err);
@@ -72,15 +76,15 @@ app.get("/debug/columns/:table", async (req, res) => {
 });
 
 // ======================================================
-// 🔥 TEST BASE SERVER
+// 🔥 TEST BASE
 // ======================================================
 app.get("/", (req, res) =>
   res.send("SmartStudy Backend attivo su PostgreSQL 🚀")
 );
 
 // ======================================================
-// 🚀 AVVIO SERVER
+// 🚀 AVVIO SERVER (CORRETTO PER RAILWAY)
 // ======================================================
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server avviato su http://localhost:${PORT}`);
+app.listen(PORT, () => {
+  console.log(`🚀 Server avviato correttamente sulla porta ${PORT} (0.0.0.0)`);
 });
