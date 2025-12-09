@@ -24,33 +24,49 @@ async function register(req, res) {
 
 /* --------------------------- LOGIN --------------------------- */
 async function login(req, res) {
-  const { username, password } = req.body;
-
   try {
+    console.log("🔥 LOGIN BODY:", req.body);
+
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      console.log("⛔ Username o password mancanti");
+      return res.status(400).json({ error: "Username o password errati" });
+    }
+
     const user = await getUserByUsername(username);
 
-    if (!user)
+    if (!user) {
+      console.log("⛔ Utente non trovato:", username);
       return res.status(400).json({ error: "Username o password errati" });
+    }
+
+    console.log("🔍 Utente trovato:", user.userid);
 
     const match = await bcrypt.compare(password, user.passwordhash);
 
-    if (!match)
+    if (!match) {
+      console.log("⛔ Password errata per:", username);
       return res.status(400).json({ error: "Username o password errati" });
+    }
 
     const token = jwt.sign({ userId: user.userid }, JWT_SECRET, {
       expiresIn: "8h",
     });
 
-    // Salva nello storico login
+    // Salvataggio login
     await db.query(
       `INSERT INTO loginhistory (userid, logintime)
        VALUES ($1, NOW())`,
       [user.userid]
     );
 
+    console.log("✔ LOGIN OK:", username);
+
     res.json({ message: "Login effettuato!", token });
+
   } catch (err) {
-    console.error("LOGIN ERROR:", err);
+    console.error("💥 LOGIN ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 }
