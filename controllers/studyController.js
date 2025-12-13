@@ -22,10 +22,24 @@ exports.processFromImages = async (req, res) => {
     }
 
     // 1️⃣ OCR
-    const rawText = await ocrService.extractTextFromImages(files);
-    if (!rawText || !rawText.trim()) {
-      return res.status(400).json({ error: "Testo non riconosciuto" });
-    }
+   const rawText = await ocrService.extractTextFromImages(files);
+
+if (!rawText) {
+  return res.status(400).json({ error: "OCR fallito" });
+}
+
+const cleanedText = rawText
+  .replace(/\s+/g, " ")
+  .replace(/[^a-zA-Z0-9àèéìòùÀÈÉÌÒÙ.,;:!?()\n ]/g, "")
+  .trim();
+
+if (cleanedText.length < 15) {
+  return res.status(400).json({
+    error: "Testo troppo breve o poco leggibile. Prova una foto più nitida.",
+    debugLength: cleanedText.length,
+  });
+}
+
 
     // 2️⃣ Salva sessione
     const qSession = await db.query(

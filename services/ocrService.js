@@ -67,9 +67,9 @@ exports.extractTextFromImages = async (files) => {
   for (const f of files) {
     const text = await ocrSingleImage(f.path);
 
-    if (text.length > 3) {
-      finalText += text + "\n\n";
-    } else {
+    if (text && text.trim()) {
+  finalText += text.trim() + "\n\n";
+} else {
       console.log("⚠️ Nessun testo rilevante in:", f.path);
     }
   }
