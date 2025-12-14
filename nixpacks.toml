@@ -1,0 +1,15 @@
+[phases.setup]
+aptPkgs = [
+  "tesseract-ocr",
+  "tesseract-ocr-ita",
+  "tesseract-ocr-eng",
+  "tesseract-ocr-fra",
+  "tesseract-ocr-spa",
+  "tesseract-ocr-deu"
+]
+
+[phases.install]
+cmds = ["npm install"]
+
+[start]
+cmd = "npm start"
