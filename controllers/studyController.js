@@ -213,22 +213,23 @@ exports.getStudySessions = async (req, res) => {
   try {
     const userID = req.user.userId;
 
-    const q = await db.query(
-      `SELECT 
-         s.sessionid,
-         s.subject,
-         s.type,
-         s.createdat,
-         sm.summary,
-         sm.audiourl,
-         oral.score AS oralscore
-       FROM study_sessions s
-       LEFT JOIN study_summaries sm ON sm.sessionid = s.sessionid
-       LEFT JOIN study_oral_evaluations oral ON oral.sessionid = s.sessionid
-       WHERE s.userid = $1
-       ORDER BY s.createdat DESC`,
-      [userID]
-    );
+   const q = await db.query(
+  `SELECT 
+     s.sessionid     AS "sessionID",
+     s.subject       AS "subject",
+     s.type          AS "type",
+     s.createdat     AS "createdAt",
+     s.rating        AS "rating",
+     sm.summary      AS "summary",
+     sm.audiourl     AS "audioUrl",
+     oral.score      AS "oralScore"
+   FROM study_sessions s
+   LEFT JOIN study_summaries sm ON sm.sessionid = s.sessionid
+   LEFT JOIN study_oral_evaluations oral ON oral.sessionid = s.sessionid
+   WHERE s.userid = $1
+   ORDER BY s.createdat DESC`,
+  [userID]
+);
 
     res.json(q.rows);
 
@@ -248,18 +249,19 @@ exports.getStudySession = async (req, res) => {
     const userID = req.user.userId;
 
     const q = await db.query(
-      `SELECT 
-         s.sessionid,
-         s.subject,
-         s.type,
-         s.createdat,
-         sm.summary,
-         sm.audiourl
-       FROM study_sessions s
-       LEFT JOIN study_summaries sm ON sm.sessionid = s.sessionid
-       WHERE s.sessionid = $1 AND s.userid = $2`,
-      [sessionID, userID]
-    );
+  `SELECT 
+     s.sessionid AS "sessionID",
+     s.subject   AS "subject",
+     s.type      AS "type",
+     s.createdat AS "createdAt",
+     sm.summary  AS "summary",
+     sm.audiourl AS "audioUrl"
+   FROM study_sessions s
+   LEFT JOIN study_summaries sm ON sm.sessionid = s.sessionid
+   WHERE s.sessionid = $1 AND s.userid = $2`,
+  [sessionID, userID]
+);
+
 
     if (!q.rows.length) {
       return res.status(404).json({ error: "Sessione non trovata" });
