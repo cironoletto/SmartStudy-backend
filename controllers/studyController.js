@@ -101,9 +101,15 @@ console.log("🟦 OCR OK, rawText length =", rawText?.length);
     res.json(payload);
 
   } catch (err) {
-    console.error("❌ processFromImages:", err);
-    res.status(500).json({ error: "Errore elaborazione immagini" });
-  } finally {
+  console.error("❌ processFromImages Error FULL:", err);
+  console.error("❌ processFromImages Error STACK:", err.stack);
+
+  res.status(500).json({
+    error: "Errore elaborazione immagini",
+    detail: err.message
+  });
+}
+finally {
     (req.files || []).forEach(f => {
       try { fs.unlinkSync(f.path); } catch {}
     });
