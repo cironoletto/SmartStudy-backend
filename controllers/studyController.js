@@ -65,7 +65,6 @@ console.log("🟦 OCR OK, rawText length =", rawText?.length);
          VALUES ($1, $2, 'summary', $3)`,
         [sessionID, summary, audioUrl]
       );
- console.log("🟩 study_summaries INSERT OK summaryID =", ins.rows[0]?.summaryid);
       payload.summary = summary;
       payload.audioUrl = audioUrl;
     }
