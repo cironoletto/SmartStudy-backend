@@ -209,35 +209,60 @@ exports.evaluateOral = async (req, res) => {
 /* ===========================================================
    📚 LISTA SESSIONI
 =========================================================== */
-exports.getStudySessions = async (req, res) => {
+exports.getStudySession = async (req, res) => {
   try {
+    const sessionID = req.params.sessionID;
     const userID = req.user.userId;
 
-   const q = await db.query(
-  `SELECT 
-     s.sessionid     AS "sessionID",
-     s.subject       AS "subject",
-     s.type          AS "type",
-     s.createdat     AS "createdAt",
-     s.rating        AS "rating",
-     sm.summary      AS "summary",
-     sm.audiourl     AS "audioUrl",
-     oral.score      AS "oralScore"
-   FROM study_sessions s
-   LEFT JOIN study_summaries sm ON sm.sessionid = s.sessionid
-   LEFT JOIN study_oral_evaluations oral ON oral.sessionid = s.sessionid
-   WHERE s.userid = $1
-   ORDER BY s.createdat DESC`,
-  [userID]
-);
+    const q = await db.query(
+      `SELECT
+         s.sessionid AS "sessionID",
+         s.subject   AS "subject",
+         s.type      AS "type",
+         s.createdat AS "createdAt",
+         s.rating    AS "rating",
 
-    res.json(q.rows);
+         sm.summary  AS "summary",
+         sm.audiourl AS "audioUrl",
 
+         sp.solutionsteps AS "solutionSteps",
+         sp.finalanswer   AS "finalAnswer"
+       FROM study_sessions s
+
+       -- ✅ ultima summary
+       LEFT JOIN LATERAL (
+         SELECT summary, audiourl
+         FROM study_summaries
+         WHERE sessionid = s.sessionid
+         ORDER BY summaryid DESC
+         LIMIT 1
+       ) sm ON true
+
+       -- ✅ ultimo problema scientifico (se esiste)
+       LEFT JOIN LATERAL (
+         SELECT solutionsteps, finalanswer
+         FROM study_problems
+         WHERE sessionid = s.sessionid
+         ORDER BY problemid DESC
+         LIMIT 1
+       ) sp ON true
+
+       WHERE s.sessionid = $1 AND s.userid = $2
+       LIMIT 1`,
+      [sessionID, userID]
+    );
+
+    if (!q.rows.length) {
+      return res.status(404).json({ error: "Sessione non trovata" });
+    }
+
+    res.json(q.rows[0]);
   } catch (err) {
-    console.error("❌ getStudySessions:", err);
-    res.status(500).json({ error: "Errore caricamento sessioni" });
+    console.error("❌ getStudySession:", err);
+    res.status(500).json({ error: "Errore caricamento sessione" });
   }
 };
+
 
 
 /* ===========================================================
