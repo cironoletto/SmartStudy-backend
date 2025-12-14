@@ -1,4 +1,3 @@
-// controllers/studyController.js
 const fs = require("fs");
 const db = require("../db");
 
@@ -26,38 +25,14 @@ exports.processFromImages = async (req, res) => {
       return res.status(400).json({ error: "Nessuna immagine fornita" });
     }
 
-    console.log("✅ FILES RICEVUTI:", (req.files || []).map(f => ({
-  fieldname: f.fieldname,
-  originalname: f.originalname,
-  mimetype: f.mimetype,
-  size: f.size,
-  path: f.path
-})));
-
-
     // 1️⃣ OCR
-   const rawText = await ocrService.extractTextFromImages(files);
+    const rawText = await ocrService.extractTextFromImages(files);
 
-   console.log("✅ OCR rawText typeof:", typeof rawText);
-console.log("✅ OCR rawText length:", rawText?.length);
-console.log("✅ OCR rawText preview:", rawText?.slice?.(0, 120));
-
-if (!rawText) {
-  return res.status(400).json({ error: "OCR fallito" });
-}
-
-const cleanedText = rawText
-  .replace(/\s+/g, " ")
-  .replace(/[^a-zA-Z0-9àèéìòùÀÈÉÌÒÙ.,;:!?()\n ]/g, "")
-  .trim();
-
-if (cleanedText.length < 15) {
-  return res.status(400).json({
-    error: "Testo troppo breve o poco leggibile. Prova una foto più nitida.",
-    debugLength: cleanedText.length,
-  });
-}
-
+    if (!rawText || rawText.length < 15) {
+      return res.status(400).json({
+        error: "Testo OCR troppo breve o non leggibile",
+      });
+    }
 
     // 2️⃣ Salva sessione
     const qSession = await db.query(
@@ -68,85 +43,67 @@ if (cleanedText.length < 15) {
     );
 
     const sessionID = qSession.rows[0].sessionid;
-    const payload = { sessionID, text: rawText };
+    const payload = { sessionID };
 
-    /* ======================================================
-       MODE: SUMMARY
-    ====================================================== */
- if (mode === "summary") {
-  const summary = await aiService.generateSummary(rawText);
+    /* ===================== SUMMARY ===================== */
+    if (mode === "summary") {
+      const summary = await aiService.generateSummary(rawText);
 
-  let audioUrl = null;
+      let audioUrl = null;
+      if (await canGenerateTTS(userID)) {
+        audioUrl = await generateSummaryAudio(summary, sessionID);
+        if (audioUrl) await incrementTTS(userID);
+      }
 
-  // 🔒 FAIR USE TTS (con limite configurabile)
-  if (await canGenerateTTS(userID)) {
-    audioUrl = await generateSummaryAudio(summary, sessionID);
+      await db.query(
+        `INSERT INTO study_summaries (sessionid, summary, ailevel, audiourl)
+         VALUES ($1, $2, 'summary', $3)`,
+        [sessionID, summary, audioUrl]
+      );
 
-    if (audioUrl) {
-      await incrementTTS(userID);
+      payload.summary = summary;
+      payload.audioUrl = audioUrl;
     }
-  } else {
-    console.log("⚠️ Limite TTS giornaliero raggiunto per user", userID);
-  }
 
-  payload.summary = summary;
-  payload.audioUrl = audioUrl;
-
-  await db.query(
-    `INSERT INTO study_summaries (sessionid, summary, ailevel, audiourl)
-     VALUES ($1, $2, 'summary', $3)`,
-    [sessionID, summary, audioUrl]
-  );
-}
-
-
-
-
-    /* ======================================================
-       MODE: SCIENTIFIC
-    ====================================================== */
+    /* ===================== SCIENTIFIC ===================== */
     if (mode === "scientific") {
       const solution = await aiService.solveScientific(rawText);
 
-      payload.solutionSteps = solution.steps;
-      payload.finalAnswer = solution.finalAnswer;
-
       await db.query(
         `INSERT INTO study_problems
-           (sessionid, detectedtype, problemtext, solutionsteps, finalanswer)
+         (sessionid, detectedtype, problemtext, solutionsteps, finalanswer)
          VALUES ($1, 'scientific', $2, $3, $4)`,
         [sessionID, rawText, solution.steps, solution.finalAnswer]
       );
+
+      payload.solutionSteps = solution.steps;
+      payload.finalAnswer = solution.finalAnswer;
     }
 
-    /* ======================================================
-       MODE: ORAL
-    ====================================================== */
+    /* ===================== ORAL ===================== */
     if (mode === "oral") {
-      const oralSummary = await aiService.generateSummary(rawText);
-
-      payload.summary = oralSummary;
+      const summary = await aiService.generateSummary(rawText);
 
       await db.query(
         `INSERT INTO study_summaries (sessionid, summary, ailevel)
          VALUES ($1, $2, 'oral')`,
-        [sessionID, oralSummary]
+        [sessionID, summary]
       );
+
+      payload.summary = summary;
     }
 
-    return res.json(payload);
+    res.json(payload);
 
   } catch (err) {
-    console.error("❌ processFromImages Error:", err);
+    console.error("❌ processFromImages:", err);
     res.status(500).json({ error: "Errore elaborazione immagini" });
-
   } finally {
-    (req.files || []).forEach((f) => {
+    (req.files || []).forEach(f => {
       try { fs.unlinkSync(f.path); } catch {}
     });
   }
 };
-
 
 /* ===========================================================
    🎙 VALUTAZIONE ORALE
@@ -155,81 +112,67 @@ exports.evaluateOral = async (req, res) => {
   try {
     const userID = req.user.userId;
     const audioFile = req.file;
-    const sessionID = req.body.sessionID || null;
+    const sessionID = req.body.sessionID;
 
     if (!audioFile) {
       return res.status(400).json({ error: "File audio mancante" });
     }
 
-    // 1️⃣ Recupero summary di riferimento
-    let reference = req.body.summary || null;
-
-    if (!reference && sessionID) {
-      const q = await db.query(
-        `SELECT summary
-         FROM study_summaries
-         WHERE sessionid = $1
-         ORDER BY summaryid DESC
-         LIMIT 1`,
-        [sessionID]
-      );
-
-      reference = q.rows[0]?.summary || null;
-    }
-
-    // 2️⃣ Trascrizione audio
-    const userText = await aiService.transcribeAudio(audioFile.path);
-
-    // 3️⃣ Valutazione
-    const evalResult = await aiService.scoreOralAnswer(reference || "", userText || "");
-    const feedback = evalResult.feedback || "";
-    const score = evalResult.score ?? null;
-
-    // 4️⃣ Salvataggio DB
-    await db.query(
-      `INSERT INTO study_oral_evaluations
-         (sessionid, userid, aisummary, useraudiourl, aifeedback, score, transcript, createdat)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
-      [sessionID, userID, reference || "", audioFile.path, feedback, score, userText]
+    const q = await db.query(
+      `SELECT summary
+       FROM study_summaries
+       WHERE sessionid = $1
+       ORDER BY summaryid DESC
+       LIMIT 1`,
+      [sessionID]
     );
 
-    res.json({ transcript: userText, feedback, score });
+    const reference = q.rows[0]?.summary || "";
+    const userText = await aiService.transcribeAudio(audioFile.path);
+    const evalResult = await aiService.scoreOralAnswer(reference, userText);
+
+    await db.query(
+      `INSERT INTO study_oral_evaluations
+       (sessionid, userid, aisummary, useraudiourl, aifeedback, score, transcript, createdat)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())`,
+      [
+        sessionID,
+        userID,
+        reference,
+        audioFile.path,
+        evalResult.feedback,
+        evalResult.score,
+        userText,
+      ]
+    );
+
+    res.json(evalResult);
 
   } catch (err) {
     console.error("❌ evaluateOral:", err);
     res.status(500).json({ error: "Errore valutazione orale" });
   } finally {
-    if (req.file) {
-      try { fs.unlinkSync(req.file.path); } catch {}
-    }
+    try { fs.unlinkSync(req.file?.path); } catch {}
   }
 };
-
 
 /* ===========================================================
    📚 LISTA SESSIONI
 =========================================================== */
-exports.getStudySession = async (req, res) => {
+exports.getStudySessions = async (req, res) => {
   try {
-    const sessionID = req.params.sessionID;
     const userID = req.user.userId;
 
     const q = await db.query(
       `SELECT
          s.sessionid AS "sessionID",
-         s.subject   AS "subject",
-         s.type      AS "type",
+         s.subject,
+         s.type,
          s.createdat AS "createdAt",
-         s.rating    AS "rating",
-
-         sm.summary  AS "summary",
-         sm.audiourl AS "audioUrl",
-
-         sp.solutionsteps AS "solutionSteps",
-         sp.finalanswer   AS "finalAnswer"
+         s.rating,
+         sm.summary,
+         sm.audiourl AS "audioUrl"
        FROM study_sessions s
-
-       -- ✅ ultima summary
        LEFT JOIN LATERAL (
          SELECT summary, audiourl
          FROM study_summaries
@@ -237,8 +180,45 @@ exports.getStudySession = async (req, res) => {
          ORDER BY summaryid DESC
          LIMIT 1
        ) sm ON true
+       WHERE s.userid = $1
+       ORDER BY s.createdat DESC`,
+      [userID]
+    );
 
-       -- ✅ ultimo problema scientifico (se esiste)
+    res.json(q.rows);
+  } catch (err) {
+    console.error("❌ getStudySessions:", err);
+    res.status(500).json({ error: "Errore caricamento sessioni" });
+  }
+};
+
+/* ===========================================================
+   📘 DETTAGLIO SESSIONE
+=========================================================== */
+exports.getStudySession = async (req, res) => {
+  try {
+    const { sessionID } = req.params;
+    const userID = req.user.userId;
+
+    const q = await db.query(
+      `SELECT
+         s.sessionid AS "sessionID",
+         s.subject,
+         s.type,
+         s.createdat AS "createdAt",
+         s.rating,
+         sm.summary,
+         sm.audiourl AS "audioUrl",
+         sp.solutionsteps AS "solutionSteps",
+         sp.finalanswer AS "finalAnswer"
+       FROM study_sessions s
+       LEFT JOIN LATERAL (
+         SELECT summary, audiourl
+         FROM study_summaries
+         WHERE sessionid = s.sessionid
+         ORDER BY summaryid DESC
+         LIMIT 1
+       ) sm ON true
        LEFT JOIN LATERAL (
          SELECT solutionsteps, finalanswer
          FROM study_problems
@@ -246,9 +226,7 @@ exports.getStudySession = async (req, res) => {
          ORDER BY problemid DESC
          LIMIT 1
        ) sp ON true
-
-       WHERE s.sessionid = $1 AND s.userid = $2
-       LIMIT 1`,
+       WHERE s.sessionid = $1 AND s.userid = $2`,
       [sessionID, userID]
     );
 
@@ -264,77 +242,41 @@ exports.getStudySession = async (req, res) => {
 };
 
 /* ===========================================================
-   📊 STATISTICHE PRINCIPALI
+   ⭐ RATING
 =========================================================== */
-exports.getStudyStats = async (req, res) => {
-  try {
-    const userID = req.user.userId;
+exports.setRating = async (req, res) => {
+  const { sessionID } = req.params;
+  const { rating } = req.body;
+  const userID = req.user.userId;
 
-    const q1 = await db.query(
-      `SELECT 
-         COUNT(*) AS totalsessions,
-         AVG(rating) AS averagerating
-       FROM study_sessions
-       WHERE userid = $1`,
-      [userID]
-    );
+  await db.query(
+    `UPDATE study_sessions
+     SET rating = $1
+     WHERE sessionid = $2 AND userid = $3`,
+    [rating, sessionID, userID]
+  );
 
-    const q2 = await db.query(
-      `SELECT type, COUNT(*) AS count
-       FROM study_sessions
-       WHERE userid = $1
-       GROUP BY type`,
-      [userID]
-    );
-
-    let modes = { summary: 0, scientific: 0, oral: 0 };
-    q2.rows.forEach((row) => {
-      modes[row.type] = row.count;
-    });
-
-    const q3 = await db.query(
-      `SELECT rating 
-       FROM study_sessions
-       WHERE userid = $1 AND rating IS NOT NULL
-       ORDER BY createdat ASC
-       LIMIT 20`,
-      [userID]
-    );
-
-    res.json({
-      totalSessions: q1.rows[0].totalsessions,
-      averageRating: q1.rows[0].averagerating,
-      modes,
-      scoreProgress: q3.rows.map((r) => r.rating),
-    });
-
-  } catch (err) {
-    console.error("❌ getStudyStats:", err);
-    res.status(500).json({ error: "Errore caricamento statistiche" });
-  }
+  res.json({ success: true });
 };
 
-
 /* ===========================================================
-   📊 STATISTICHE GLOBALI
+   📊 STATISTICHE
 =========================================================== */
-exports.getGlobalStats = async (req, res) => {
-  try {
-    const q1 = await db.query(`SELECT COUNT(*) AS totalsessions FROM study_sessions`);
+exports.getStudyStats = async (req, res) => {
+  const userID = req.user.userId;
 
-    const q2 = await db.query(
-      `SELECT COUNT(*) AS totaloralevaluations, AVG(score) AS avgoralscore
-       FROM study_oral_evaluations`
-    );
+  const q = await db.query(
+    `SELECT COUNT(*) total, AVG(rating) avg
+     FROM study_sessions WHERE userid = $1`,
+    [userID]
+  );
 
-    res.json({
-      totalSessionsAll: q1.rows[0].totalsessions,
-      totalOralEvaluationsAll: q2.rows[0].totaloralevaluations,
-      avgOralScoreAll: q2.rows[0].avgoralscore,
-    });
+  res.json(q.rows[0]);
+};
 
-  } catch (err) {
-    console.error("❌ getGlobalStats:", err);
-    res.status(500).json({ error: "Errore statistiche globali" });
-  }
+exports.getGlobalStats = async (_req, res) => {
+  const q = await db.query(
+    `SELECT COUNT(*) total FROM study_sessions`
+  );
+  res.json(q.rows[0]);
 };
