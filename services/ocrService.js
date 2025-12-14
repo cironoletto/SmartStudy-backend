@@ -62,18 +62,28 @@ async function ocrSingleImage(filePath) {
 // 🔥 OCR MULTI-IMMAGINE
 //-------------------------------------------------------------
 exports.extractTextFromImages = async (files) => {
-  let finalText = "";
+  try {
+    if (!Array.isArray(files) || files.length === 0) return "";
 
-  for (const f of files) {
-    const text = await ocrSingleImage(f.path);
+    let finalText = "";
 
-    if (text && text.trim()) {
-  finalText += text.trim() + "\n\n";
-} else {
-      console.log("⚠️ Nessun testo rilevante in:", f.path);
+    for (const f of files) {
+      console.log("📦 FILE:", { path: f.path, size: f.size, mimetype: f.mimetype });
+
+      const text = await ocrSingleImage(f.path);
+
+      if (text && text.trim()) {
+        finalText += text.trim() + "\n\n";
+      } else {
+        console.log("⚠️ OCR vuoto per:", f.path);
+      }
     }
-  }
 
-  return finalText.trim();
+    return (finalText || "").trim();
+  } catch (err) {
+    console.error("❌ extractTextFromImages ERROR:", err);
+    return ""; // 🔥 mai undefined/null
+  }
 };
+
 

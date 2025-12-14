@@ -4,7 +4,12 @@ const db = require("../db");
 
 const ocrService = require("../services/ocrService");
 const aiService = require("../services/aiService");
-const { generateSummaryAudio } = require("../services/elevenlabsService");
+const { generateSummaryAudio } = require("../services/openaiTtsService");
+
+const {
+  canGenerateTTS,
+  incrementTTS,
+} = require("../services/ttsUsageService");
 
 /* ===========================================================
    📸 PROCESS IMAGES → OCR → AI
@@ -21,8 +26,21 @@ exports.processFromImages = async (req, res) => {
       return res.status(400).json({ error: "Nessuna immagine fornita" });
     }
 
+    console.log("✅ FILES RICEVUTI:", (req.files || []).map(f => ({
+  fieldname: f.fieldname,
+  originalname: f.originalname,
+  mimetype: f.mimetype,
+  size: f.size,
+  path: f.path
+})));
+
+
     // 1️⃣ OCR
    const rawText = await ocrService.extractTextFromImages(files);
+
+   console.log("✅ OCR rawText typeof:", typeof rawText);
+console.log("✅ OCR rawText length:", rawText?.length);
+console.log("✅ OCR rawText preview:", rawText?.slice?.(0, 120));
 
 if (!rawText) {
   return res.status(400).json({ error: "OCR fallito" });
@@ -55,19 +73,34 @@ if (cleanedText.length < 15) {
     /* ======================================================
        MODE: SUMMARY
     ====================================================== */
-    if (mode === "summary") {
-      const summary = await aiService.generateSummary(rawText);
-      const audioUrl = await generateSummaryAudio(summary, sessionID);
+ if (mode === "summary") {
+  const summary = await aiService.generateSummary(rawText);
 
-      payload.summary = summary;
-      payload.audioUrl = audioUrl;
+  let audioUrl = null;
 
-      await db.query(
-        `INSERT INTO study_summaries (sessionid, summary, ailevel, audiourl)
-         VALUES ($1, $2, 'summary', $3)`,
-        [sessionID, summary, audioUrl]
-      );
+  // 🔒 FAIR USE TTS (con limite configurabile)
+  if (await canGenerateTTS(userID)) {
+    audioUrl = await generateSummaryAudio(summary, sessionID);
+
+    if (audioUrl) {
+      await incrementTTS(userID);
     }
+  } else {
+    console.log("⚠️ Limite TTS giornaliero raggiunto per user", userID);
+  }
+
+  payload.summary = summary;
+  payload.audioUrl = audioUrl;
+
+  await db.query(
+    `INSERT INTO study_summaries (sessionid, summary, ailevel, audiourl)
+     VALUES ($1, $2, 'summary', $3)`,
+    [sessionID, summary, audioUrl]
+  );
+}
+
+
+
 
     /* ======================================================
        MODE: SCIENTIFIC
