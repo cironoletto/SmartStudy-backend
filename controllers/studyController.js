@@ -50,24 +50,42 @@ console.log("🟦 OCR OK, rawText length =", rawText?.length);
     const payload = { sessionID };
 
     /* ===================== SUMMARY ===================== */
-    if (mode === "summary") {
-        console.log("🧠 ENTER SUMMARY BLOCK sessionID =", sessionID);
-      const summary = await aiService.generateSummary(rawText);
- console.log("🧠 SUMMARY GENERATED length =", summary?.length);
-      let audioUrl = null;
-      if (await canGenerateTTS(userID)) {
-        audioUrl = await generateSummaryAudio(summary, sessionID);
-        if (audioUrl) await incrementTTS(userID);
-      }
+ if (mode === "summary") {
+  console.log("🧠 ENTER SUMMARY BLOCK sessionID =", sessionID);
 
-      await db.query(
-        `INSERT INTO study_summaries (sessionid, summary, ailevel, audiourl)
-         VALUES ($1, $2, 'summary', $3)`,
-        [sessionID, summary, audioUrl]
-      );
-      payload.summary = summary;
-      payload.audioUrl = audioUrl;
+  const summary = await aiService.generateSummary(rawText);
+  console.log("🧠 SUMMARY GENERATED length =", summary?.length);
+
+  let audioUrl = null;
+
+  console.log("🎛 canGenerateTTS: start");
+  const okTts = await canGenerateTTS(userID);
+  console.log("🎛 canGenerateTTS: result =", okTts);
+
+  if (okTts) {
+    console.log("🎧 generateSummaryAudio: start");
+    audioUrl = await generateSummaryAudio(summary, sessionID);
+    console.log("🎧 generateSummaryAudio: result =", audioUrl);
+
+    if (audioUrl) {
+      console.log("📈 incrementTTS: start");
+      await incrementTTS(userID);
+      console.log("📈 incrementTTS: done");
     }
+  }
+
+  console.log("📝 INSERT study_summaries: start");
+  await db.query(
+    `INSERT INTO study_summaries (sessionid, summary, ailevel, audiourl)
+     VALUES ($1, $2, 'summary', $3)`,
+    [sessionID, summary, audioUrl]
+  );
+  console.log("📝 INSERT study_summaries: done");
+
+  payload.summary = summary;
+  payload.audioUrl = audioUrl;
+}
+
 
     /* ===================== SCIENTIFIC ===================== */
     if (mode === "scientific") {
@@ -96,6 +114,7 @@ console.log("🟦 OCR OK, rawText length =", rawText?.length);
 
       payload.summary = summary;
     }
+console.log("✅ RESPONDING payload keys =", Object.keys(payload));
 
     res.json(payload);
 
