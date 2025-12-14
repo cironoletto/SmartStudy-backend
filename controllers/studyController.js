@@ -19,6 +19,7 @@ exports.processFromImages = async (req, res) => {
     if (!userID) return res.status(401).json({ error: "Utente non autenticato" });
 
     const mode = (req.body.mode || "summary").toLowerCase();
+    console.log("🟦 STUDY mode =", mode);
     const files = req.files || [];
 
     if (!files.length) {
@@ -27,6 +28,7 @@ exports.processFromImages = async (req, res) => {
 
     // 1️⃣ OCR
     const rawText = await ocrService.extractTextFromImages(files);
+console.log("🟦 OCR OK, rawText length =", rawText?.length);
 
     if (!rawText || rawText.length < 15) {
       return res.status(400).json({
@@ -43,12 +45,15 @@ exports.processFromImages = async (req, res) => {
     );
 
     const sessionID = qSession.rows[0].sessionid;
+    console.log("🟩 study_sessions INSERT OK sessionID =", sessionID);
+
     const payload = { sessionID };
 
     /* ===================== SUMMARY ===================== */
     if (mode === "summary") {
+        console.log("🧠 ENTER SUMMARY BLOCK sessionID =", sessionID);
       const summary = await aiService.generateSummary(rawText);
-
+ console.log("🧠 SUMMARY GENERATED length =", summary?.length);
       let audioUrl = null;
       if (await canGenerateTTS(userID)) {
         audioUrl = await generateSummaryAudio(summary, sessionID);
@@ -60,7 +65,7 @@ exports.processFromImages = async (req, res) => {
          VALUES ($1, $2, 'summary', $3)`,
         [sessionID, summary, audioUrl]
       );
-
+ console.log("🟩 study_summaries INSERT OK summaryID =", ins.rows[0]?.summaryid);
       payload.summary = summary;
       payload.audioUrl = audioUrl;
     }
@@ -184,6 +189,8 @@ exports.getStudySessions = async (req, res) => {
        ORDER BY s.createdat DESC`,
       [userID]
     );
+console.log("🟨 getStudySessions rows =", q.rows.length);
+console.log("🟨 first row preview =", q.rows[0]);
 
     res.json(q.rows);
   } catch (err) {
@@ -233,6 +240,7 @@ exports.getStudySession = async (req, res) => {
     if (!q.rows.length) {
       return res.status(404).json({ error: "Sessione non trovata" });
     }
+console.log("🟨 getStudySession result =", q.rows[0]);
 
     res.json(q.rows[0]);
   } catch (err) {
