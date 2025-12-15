@@ -86,21 +86,36 @@ console.log("🟦 OCR OK, rawText length =", rawText?.length);
   payload.audioUrl = audioUrl;
 }
 
+ /* ===================== SCIENTIFIC ===================== */
+if (mode === "scientific") {
+  const level = req.body.level || "guided";
 
-    /* ===================== SCIENTIFIC ===================== */
-    if (mode === "scientific") {
-      const solution = await aiService.solveScientific(rawText);
+  let solution;
 
-      await db.query(
-        `INSERT INTO study_problems
-         (sessionid, detectedtype, problemtext, solutionsteps, finalanswer)
-         VALUES ($1, 'scientific', $2, $3, $4)`,
-        [sessionID, rawText, solution.steps, solution.finalAnswer]
-      );
+  if (level === "theory") {
+    solution = await aiService.explainScientificTheory(rawText);
+  } else {
+    solution = await aiService.solveScientificGuided(rawText);
+  }
 
-      payload.solutionSteps = solution.steps;
-      payload.finalAnswer = solution.finalAnswer;
-    }
+  await db.query(
+    `INSERT INTO study_problems
+     (sessionid, detectedtype, problemtext, solutionsteps, finalanswer)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      sessionID,
+      level,
+      rawText,
+      solution.steps || null,
+      solution.finalAnswer || solution.text
+    ]
+  );
+
+  payload.level = level;
+  payload.solutionSteps = solution.steps || null;
+  payload.finalAnswer = solution.finalAnswer || solution.text;
+}
+
 
     /* ===================== ORAL ===================== */
     if (mode === "oral") {

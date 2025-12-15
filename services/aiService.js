@@ -185,3 +185,60 @@ Restituisci un JSON con questa struttura:
     };
   }
 };
+
+exports.explainScientificTheory = async (text) => {
+  const prompt = `
+Spiega l'esercizio dal punto di vista TEORICO.
+NON svolgere calcoli.
+NON risolvere l'esercizio.
+
+Struttura obbligatoria:
+- Obiettivo dell’esercizio
+- Concetti matematici coinvolti
+- Metodo generale di risoluzione
+- Errori comuni da evitare
+
+Usa linguaggio scolastico italiano.
+`;
+
+  const res = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: "Sei un professore di matematica." },
+      { role: "user", content: text },
+      { role: "user", content: prompt },
+    ],
+  });
+
+  return { text: res.choices[0].message.content };
+};
+
+exports.solveScientificGuided = async (text) => {
+  const prompt = `
+Svolgi l'esercizio in modo COMPLETO e GUIDATO.
+Scrivi come su un quaderno di uno studente.
+
+Struttura obbligatoria:
+PASSO 1 – Scrittura della funzione
+PASSO 2 – Asintoti
+PASSO 3 – Condizioni richieste
+PASSO 4 – Risoluzione del sistema
+PASSO 5 – Risultato finale
+
+Spiega ogni passaggio.
+`;
+
+  const res = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: "Sei un professore di matematica." },
+      { role: "user", content: text },
+      { role: "user", content: prompt },
+    ],
+  });
+
+  return {
+    steps: res.choices[0].message.content.split("\n\n"),
+    finalAnswer: res.choices[0].message.content,
+  };
+};
