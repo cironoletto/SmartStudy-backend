@@ -32,6 +32,9 @@ router.get("/:quizID", quizPlayController.getQuizDetail);
 router.get("/:quizID/attempts", quizPlayController.getQuizAttempts);
 router.post("/:quizID/attempts", quizPlayController.createAttempt);
 
+// ✅ alias per compatibilità (frontend vecchio /attempt)
+router.post("/:quizID/attempt", quizPlayController.createAttempt);
+
 // --------------------------
 // RISPOSTE
 // --------------------------
