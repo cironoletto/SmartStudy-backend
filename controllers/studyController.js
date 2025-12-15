@@ -95,7 +95,28 @@ if (mode === "scientific") {
   if (level === "theory") {
     solution = await aiService.explainScientificTheory(rawText);
   } else {
-    solution = await aiService.solveScientificGuided(rawText);
+   let scientificResult;
+
+try {
+  scientificResult = await solveScientificGuided(rawText);
+} catch (err) {
+  console.warn("⚠️ Svolgimento non valido, fallback a teoria:", err.message);
+
+  const theory = await explainScientificTheory(rawText);
+
+  return res.json({
+    level: "theory",
+    finalAnswer: theory.text,
+    solutionSteps: [],
+  });
+}
+
+return res.json({
+  level: "guided",
+  finalAnswer: scientificResult.finalAnswer,
+  solutionSteps: scientificResult.steps,
+});
+
   }
 
   await db.query(
