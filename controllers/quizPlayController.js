@@ -112,74 +112,64 @@ exports.createAttempt = async (req, res) => {
 //
 exports.submitAnswers = async (req, res) => {
   try {
-    const quizID = parseInt(req.params.quizID);
-    const attemptID = parseInt(req.params.attemptID);
+    const quizID = Number(req.params.quizID);
+    const attemptID = Number(req.params.attemptID);
     const userID = req.user.userId;
-    const answers = req.body.answers || [];
+    const answers = Array.isArray(req.body) ? req.body : req.body.answers;
 
-    // 1️⃣ Domande
+    if (!Array.isArray(answers)) {
+      return res.status(400).json({ error: "Formato risposte non valido" });
+    }
+
     const qQuestions = await db.query(
       "SELECT * FROM questions WHERE quizid = $1",
       [quizID]
     );
 
-    const questionsMap = {};
-    qQuestions.rows.forEach((q) => {
-      questionsMap[q.questionid] = q;
-    });
+    const map = {};
+    qQuestions.rows.forEach(q => (map[q.questionid] = q));
 
     let totalScore = 0;
     let maxScore = 0;
-
     const details = [];
 
-    // 2️⃣ Ciclo risposte
     for (const a of answers) {
-      const q = questionsMap[a.questionID];
+      const q = map[a.questionID];
       if (!q) continue;
 
       const points = q.points || 1;
       maxScore += points;
 
       let isCorrect = false;
-      let obtained = 0;
-
-      let userAnswer = a.answerText || null;
+      let userAnswer = null;
       let correctAnswer = null;
 
-      // MULTIPLE CHOICE
       if (q.questiontype === "mcq") {
-        const correctIndex = parseInt(q.correctanswer);
-        const userIndex = a.selectedIndex;
-
         const choices = q.choicesjson ? JSON.parse(q.choicesjson) : [];
-
-        userAnswer = choices[userIndex] || null;
-        correctAnswer = choices[correctIndex] || null;
-
-        if (userIndex === correctIndex) {
+        userAnswer = choices[a.selectedIndex] ?? null;
+        correctAnswer = choices[Number(q.correctanswer)] ?? null;
+        if (a.selectedIndex === Number(q.correctanswer)) {
           isCorrect = true;
-          obtained = points;
+          totalScore += points;
         }
       }
-      // OPEN ANSWER
-      else if (q.questiontype === "open") {
-        correctAnswer = q.correctanswer || "";
+
+      if (q.questiontype === "open") {
         userAnswer = (a.answerText || "").trim();
-
-        if (userAnswer.toLowerCase() === correctAnswer.toLowerCase()) {
+        correctAnswer = q.correctanswer;
+        if (
+          correctAnswer &&
+          userAnswer.toLowerCase() === correctAnswer.toLowerCase()
+        ) {
           isCorrect = true;
-          obtained = points;
+          totalScore += points;
         }
       }
 
-      totalScore += obtained;
-
-      // Salva risposta nel DB PostgreSQL
       await db.query(
         `INSERT INTO answers (attemptid, questionid, answertext, iscorrect, score)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [attemptID, a.questionID, userAnswer, isCorrect, obtained]
+         VALUES ($1,$2,$3,$4,$5)`,
+        [attemptID, a.questionID, userAnswer, isCorrect, isCorrect ? points : 0]
       );
 
       details.push({
@@ -190,25 +180,18 @@ exports.submitAnswers = async (req, res) => {
       });
     }
 
-    // 3️⃣ aggiorna il tentativo
-    const isPassed = totalScore >= Math.round(maxScore * 0.6);
+    const isPassed = totalScore >= Math.ceil(maxScore * 0.6);
 
     await db.query(
       `UPDATE attempts
-       SET score = $1, maxscore = $2, ispassed = $3, completedat = NOW()
-       WHERE attemptid = $4 AND userid = $5`,
+       SET score=$1, maxscore=$2, ispassed=$3, completedat=NOW()
+       WHERE attemptid=$4 AND userid=$5`,
       [totalScore, maxScore, isPassed, attemptID, userID]
     );
 
-    res.json({
-      attemptID,
-      totalScore,
-      maxScore,
-      isPassed,
-      details,
-    });
+    res.json({ attemptID, totalScore, maxScore, isPassed, details });
   } catch (err) {
     console.error("submitAnswers error:", err);
-    res.status(500).json({ error: "Errore nel salvataggio risposte" });
+    res.status(500).json({ error: "Errore submit risposte" });
   }
 };
