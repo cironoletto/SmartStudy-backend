@@ -87,53 +87,41 @@ console.log("🟦 OCR OK, rawText length =", rawText?.length);
 }
 
  /* ===================== SCIENTIFIC ===================== */
+/* ===================== SCIENTIFIC ===================== */
 if (mode === "scientific") {
   const level = req.body.level || "guided";
-
   let solution;
 
   if (level === "theory") {
     solution = await aiService.explainScientificTheory(rawText);
+
   } else {
-   let scientificResult;
+    try {
+      solution = await aiService.solveScientificGuided(rawText);
+    } catch (err) {
+      console.warn("⚠️ Svolgimento non valido, fallback a teoria:", err.message);
 
-try {
-  scientificResult = await solveScientificGuided(rawText);
-} catch (err) {
-  console.warn("⚠️ Svolgimento non valido, fallback a teoria:", err.message);
-
-  const theory = await explainScientificTheory(rawText);
-
-  return res.json({
-    level: "theory",
-    finalAnswer: theory.text,
-    solutionSteps: [],
-  });
-}
-
-return res.json({
-  level: "guided",
-  finalAnswer: scientificResult.finalAnswer,
-  solutionSteps: scientificResult.steps,
-});
-
+      solution = await aiService.explainScientificTheory(rawText);
+      payload.level = "theory";
+    }
   }
 
+  // 📝 salva SEMPRE
   await db.query(
     `INSERT INTO study_problems
      (sessionid, detectedtype, problemtext, solutionsteps, finalanswer)
      VALUES ($1, $2, $3, $4, $5)`,
     [
       sessionID,
-      level,
+      payload.level || level,
       rawText,
       solution.steps || null,
       solution.finalAnswer || solution.text
     ]
   );
 
-  payload.level = level;
-  payload.solutionSteps = solution.steps || null;
+  payload.level = payload.level || level;
+  payload.solutionSteps = solution.steps || [];
   payload.finalAnswer = solution.finalAnswer || solution.text;
 }
 
