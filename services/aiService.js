@@ -201,7 +201,7 @@ Struttura obbligatoria:
 Usa linguaggio scolastico italiano.
 `;
 
-  const res = await openai.chat.completions.create({
+  const res = await client.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       { role: "system", content: "Sei un professore di matematica." },
@@ -228,7 +228,7 @@ PASSO 5 – Risultato finale
 Spiega ogni passaggio.
 `;
 
-  const res = await openai.chat.completions.create({
+  const res = await client.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       { role: "system", content: "Sei un professore di matematica." },
