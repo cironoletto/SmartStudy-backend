@@ -10,9 +10,33 @@ const openai = new OpenAI({
 });
 
 const QUIZ_SYSTEM_PROMPT = `
-Sei un generatore di quiz estremamente conciso.
-Restituisci SOLO un JSON con la struttura richiesta.
+Sei un generatore di quiz scolastici.
+
+⚠️ REGOLE OBBLIGATORIE:
+- DEVI generare almeno 5 domande
+- Ogni domanda DEVE avere 4 opzioni
+- UNA SOLA risposta corretta
+- Non restituire mai un array vuoto
+
+STRUTTURA JSON OBBLIGATORIA:
+
+{
+  "title": "Titolo del quiz",
+  "description": "Breve descrizione",
+  "questions": [
+    {
+      "text": "Domanda",
+      "options": ["A", "B", "C", "D"],
+      "correctIndex": 0
+    }
+  ]
+}
+
+Se il testo OCR è poco chiaro:
+- genera comunque domande GENERICHE ma coerenti
+- NON lasciare mai questions vuoto
 `;
+
 
 // POST /api/quiz/from-images
 exports.generateQuizFromImages = async (req, res) => {
