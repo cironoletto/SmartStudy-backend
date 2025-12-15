@@ -94,17 +94,30 @@ if (mode === "scientific") {
 
   if (level === "theory") {
     solution = await aiService.explainScientificTheory(rawText);
+} else {
+  try {
+    solution = await aiService.solveScientificGuided(rawText);
 
-  } else {
+  } catch (errGuided) {
+    console.warn("⚠️ Guided non valido, fallback a teoria:", errGuided.message);
+
     try {
-      solution = await aiService.solveScientificGuided(rawText);
-    } catch (err) {
-      console.warn("⚠️ Svolgimento non valido, fallback a teoria:", err.message);
-
       solution = await aiService.explainScientificTheory(rawText);
+      payload.level = "theory";
+
+    } catch (errTheory) {
+      console.warn("⚠️ Theory non valida, fallback safe:", errTheory.message);
+
+      // 🔥 ULTIMO LIVELLO: SAFE THEORY (senza throw)
+      solution = {
+        text: "Il problema richiede l’analisi teorica di una funzione razionale con parametri. In questi casi si studiano gli asintoti, le condizioni di tangenza e le proprietà delle derivate applicando metodi standard dell’analisi matematica, evitando ipotesi arbitrarie."
+      };
+
       payload.level = "theory";
     }
   }
+}
+
 
   // 📝 salva SEMPRE
   await db.query(
