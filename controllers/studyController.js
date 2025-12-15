@@ -10,6 +10,48 @@ const {
   incrementTTS,
 } = require("../services/ttsUsageService");
 
+
+function detectSubjectFromText(text) {
+  const t = text.toLowerCase();
+
+  if (
+    t.includes("funzione") ||
+    t.includes("derivata") ||
+    t.includes("asintoto") ||
+    t.includes("integrale")
+  ) {
+    return "Matematica";
+  }
+
+  if (
+    t.includes("poesia") ||
+    t.includes("autore") ||
+    t.includes("testo") ||
+    t.includes("analisi del testo")
+  ) {
+    return "Italiano";
+  }
+
+  if (
+    t.includes("rivoluzione") ||
+    t.includes("storia") ||
+    t.includes("secolo") ||
+    t.includes("guerra")
+  ) {
+    return "Storia";
+  }
+
+  if (
+    t.includes("chimica") ||
+    t.includes("molecola") ||
+    t.includes("reazione")
+  ) {
+    return "Scienze";
+  }
+
+  return "Studio";
+}
+
 /* ===========================================================
    📸 PROCESS IMAGES → OCR → AI
 =========================================================== */
@@ -28,6 +70,11 @@ exports.processFromImages = async (req, res) => {
 
     // 1️⃣ OCR
     const rawText = await ocrService.extractTextFromImages(files);
+
+    // 📘 SUBJECT automatico
+const subject =
+  req.body.subject ||
+  detectSubjectFromText(rawText);
 console.log("🟦 OCR OK, rawText length =", rawText?.length);
 
     if (!rawText || rawText.length < 15) {
@@ -36,13 +83,20 @@ console.log("🟦 OCR OK, rawText length =", rawText?.length);
       });
     }
 
+   
     // 2️⃣ Salva sessione
-    const qSession = await db.query(
-      `INSERT INTO study_sessions (userid, subject, type, rawtext, createdat)
-       VALUES ($1, $2, $3, $4, NOW())
-       RETURNING sessionid`,
-      [userID, req.body.subject || null, mode, rawText]
-    );
+// 2️⃣ Rileva materia automaticamente
+const detectedSubject =
+  req.body.subject || detectSubjectFromText(rawText);
+
+// 3️⃣ Salva sessione
+const qSession = await db.query(
+  `INSERT INTO study_sessions (userid, subject, type, rawtext, createdat)
+   VALUES ($1, $2, $3, $4, NOW())
+   RETURNING sessionid`,
+  [userID, detectedSubject, mode, rawText]
+);
+
 
     const sessionID = qSession.rows[0].sessionid;
     console.log("🟩 study_sessions INSERT OK sessionID =", sessionID);
