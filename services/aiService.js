@@ -188,30 +188,40 @@ Restituisci un JSON con questa struttura:
 
 exports.explainScientificTheory = async (text) => {
   const prompt = `
-Spiega l'esercizio dal punto di vista TEORICO.
-NON svolgere calcoli.
-NON risolvere l'esercizio.
+Spiega l'esercizio ESCLUSIVAMENTE dal punto di vista TEORICO.
 
-Struttura obbligatoria:
-- Obiettivo dell’esercizio
-- Concetti matematici coinvolti
-- Metodo generale di risoluzione
-- Errori comuni da evitare
+DIVIETI ASSOLUTI:
+- NON scrivere formule
+- NON svolgere calcoli
+- NON sostituire numeri
+- NON determinare parametri
+- NON arrivare a una soluzione
+- NON riscrivere il problema in forma risolta
 
-Usa linguaggio scolastico italiano.
+DEVI:
+- spiegare QUAL È L'OBIETTIVO dell’esercizio
+- indicare QUALI CONCETTI matematici sono coinvolti
+- descrivere il METODO GENERALE di risoluzione (a parole)
+- indicare ERRORI COMUNI da evitare
+
+Scrivi come un libro di teoria.
+Usa solo linguaggio descrittivo, senza matematica operativa.
+Lingua: italiano scolastico.
 `;
 
   const res = await client.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
-      { role: "system", content: "Sei un professore di matematica." },
+      { role: "system", content: "Sei un professore di matematica molto rigoroso." },
       { role: "user", content: text },
       { role: "user", content: prompt },
     ],
+    temperature: 0.2,
   });
 
-  return { text: res.choices[0].message.content };
+  return { text: res.choices[0].message.content.trim() };
 };
+
 
 exports.solveScientificGuided = async (text) => {
   const prompt = `
