@@ -56,9 +56,9 @@ exports.getQuizDetail = async (req, res) => {
     }));
 
     res.json({
-      quiz: qQuiz.rows[0],
-      questions,
-    });
+  quiz: qQuiz.rows[0],
+  questions: questions || [],
+});
   } catch (err) {
     console.error("getQuizDetail error:", err);
     res.status(500).json({ error: "Errore nel recupero quiz" });
