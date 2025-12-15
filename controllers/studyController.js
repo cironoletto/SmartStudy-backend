@@ -120,18 +120,21 @@ if (mode === "scientific") {
 
 
   // 📝 salva SEMPRE
+if (level !== "theory" || solution.steps) {
   await db.query(
     `INSERT INTO study_problems
      (sessionid, detectedtype, problemtext, solutionsteps, finalanswer)
      VALUES ($1, $2, $3, $4, $5)`,
     [
       sessionID,
-      payload.level || level,
+      level,
       rawText,
-      solution.steps || null,
+      solution.steps || [],
       solution.finalAnswer || solution.text
     ]
   );
+}
+
 
   payload.level = payload.level || level;
   payload.solutionSteps = solution.steps || [];
@@ -157,11 +160,23 @@ console.log("✅ RESPONDING payload keys =", Object.keys(payload));
 
   } catch (err) {
   console.error("❌ processFromImages Error FULL:", err);
-  console.error("❌ processFromImages Error STACK:", err.stack);
 
-  res.status(500).json({
-    error: "Errore elaborazione immagini",
-    detail: err.message
+  let userMessage = "Non siamo riusciti a completare l’analisi.";
+
+  if (err.message?.includes("ipotesi")) {
+    userMessage =
+      "Il problema richiede dati aggiuntivi o è ambiguo. Prova a caricare un esercizio più completo.";
+  } else if (err.message?.includes("teorica")) {
+    userMessage =
+      "Non è stato possibile fornire una spiegazione affidabile per questo esercizio.";
+  } else if (err.code === "23502") {
+    userMessage =
+      "Si è verificato un problema interno durante il salvataggio dei risultati.";
+  }
+
+  res.status(200).json({
+    warning: true,
+    message: userMessage,
   });
 }
 finally {
