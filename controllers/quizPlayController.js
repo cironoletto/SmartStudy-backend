@@ -143,13 +143,16 @@ exports.submitAnswers = async (req, res) => {
       let isCorrect = false;
       let userAnswer = null;
       let correctAnswer = null;
+      let obtainedScore = 0;   // ✅ FIX CHIAVE
 
       if (q.questiontype === "mcq") {
         const choices = q.choicesjson ? JSON.parse(q.choicesjson) : [];
         userAnswer = choices[a.selectedIndex] ?? null;
         correctAnswer = choices[Number(q.correctanswer)] ?? null;
+
         if (a.selectedIndex === Number(q.correctanswer)) {
           isCorrect = true;
+          obtainedScore = points;
           totalScore += points;
         }
       }
@@ -157,49 +160,57 @@ exports.submitAnswers = async (req, res) => {
       if (q.questiontype === "open") {
         userAnswer = (a.answerText || "").trim();
         correctAnswer = q.correctanswer;
+
         if (
           correctAnswer &&
+          userAnswer &&
           userAnswer.toLowerCase() === correctAnswer.toLowerCase()
         ) {
           isCorrect = true;
+          obtainedScore = points;
           totalScore += points;
         }
       }
 
       await db.query(
-  `INSERT INTO answers (attemptid, questionid, answertext, iscorrect, score, audiourl)
-   VALUES ($1, $2, $3, $4, $5, $6)`,
-  [
-    attemptID,
-    a.questionID,
-    userAnswer,
-    isCorrect,
-    obtained,
-    a.audioUrl || null,
-  ]
-);
-
+        `INSERT INTO answers
+         (attemptid, questionid, answertext, iscorrect, score, audiourl)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          attemptID,
+          a.questionID,
+          userAnswer,
+          isCorrect,
+          obtainedScore,           // ✅ NON obtained
+          a.audioUrl || null,
+        ]
+      );
 
       details.push({
         questionID: a.questionID,
         correct: isCorrect,
-        userAnswer,
         correctAnswer,
+        userAnswer,
       });
     }
 
-    const isPassed = totalScore >= Math.ceil(maxScore * 0.6);
-
     await db.query(
       `UPDATE attempts
-       SET score=$1, maxscore=$2, ispassed=$3, completedat=NOW()
-       WHERE attemptid=$4 AND userid=$5`,
-      [totalScore, maxScore, isPassed, attemptID, userID]
+       SET completedat = NOW(),
+           score = $1,
+           maxscore = $2
+       WHERE attemptid = $3 AND userid = $4`,
+      [totalScore, maxScore, attemptID, userID]
     );
 
-    res.json({ attemptID, totalScore, maxScore, isPassed, details });
+    res.json({
+      totalScore,
+      maxScore,
+      details,
+    });
   } catch (err) {
     console.error("submitAnswers error:", err);
     res.status(500).json({ error: "Errore submit risposte" });
   }
 };
+

@@ -1,4 +1,6 @@
 const fs = require("fs");
+const path = require("path");
+const { exec } = require("child_process");
 const OpenAI = require("openai");
 
 const openai = new OpenAI({
@@ -8,20 +10,37 @@ const openai = new OpenAI({
 exports.stt = async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ error: "Nessun file audio" });
+      return res.status(400).json({ error: "File audio mancante" });
     }
 
-    const filePath = req.file.path;
+    const inputPath = req.file.path;               // .m4a
+    const outputPath = `${inputPath}.wav`;          // .wav
 
-    const transcript = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(filePath),
-      model: "gpt-4o-transcribe",
+    console.log("🎧 STT input:", inputPath);
+
+    // 🔁 CONVERSIONE m4a → wav
+    await new Promise((resolve, reject) => {
+      exec(
+        `ffmpeg -y -i "${inputPath}" -ar 16000 -ac 1 "${outputPath}"`,
+        (err) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
     });
 
-    fs.unlinkSync(filePath); // cleanup
+    const transcription = await openai.audio.transcriptions.create({
+      file: fs.createReadStream(outputPath),
+      model: "gpt-4o-transcribe",
+      response_format: "json",
+    });
+
+    // 🧹 cleanup
+    fs.unlinkSync(inputPath);
+    fs.unlinkSync(outputPath);
 
     res.json({
-      text: transcript.text || "",
+      text: transcription.text || "",
     });
   } catch (err) {
     console.error("❌ STT BACKEND ERROR:", err);
