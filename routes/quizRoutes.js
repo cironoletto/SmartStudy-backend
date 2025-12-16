@@ -8,6 +8,8 @@ const authMiddleware = require("../middleware/authMiddleware");
 const quizFromOCRController = require("../controllers/quizFromOCRController");
 const quizPlayController = require("../controllers/quizPlayController");
 
+const quizSTTController = require("../controllers/quizSTTController");
+
 // Tutto richiede login
 router.use(authMiddleware);
 
@@ -42,6 +44,14 @@ router.post(
   "/:quizID/attempts/:attemptID/answers",
   quizPlayController.submitAnswers
 );
+
+// 🎤 Speech to Text per quiz (open answers)
+router.post(
+  "/stt",
+  upload.single("audio"),
+  quizSTTController.quizSpeechToText
+);
+
 
 module.exports = router;
 

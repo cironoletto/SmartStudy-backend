@@ -167,10 +167,18 @@ exports.submitAnswers = async (req, res) => {
       }
 
       await db.query(
-        `INSERT INTO answers (attemptid, questionid, answertext, iscorrect, score)
-         VALUES ($1,$2,$3,$4,$5)`,
-        [attemptID, a.questionID, userAnswer, isCorrect, isCorrect ? points : 0]
-      );
+  `INSERT INTO answers (attemptid, questionid, answertext, iscorrect, score, audiourl)
+   VALUES ($1, $2, $3, $4, $5, $6)`,
+  [
+    attemptID,
+    a.questionID,
+    userAnswer,
+    isCorrect,
+    obtained,
+    a.audioUrl || null,
+  ]
+);
+
 
       details.push({
         questionID: a.questionID,
