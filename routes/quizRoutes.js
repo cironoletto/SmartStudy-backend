@@ -46,11 +46,17 @@ router.post(
 );
 
 // 🎤 Speech to Text per quiz (open answers)
-router.post(
-  "/stt",
-  upload.single("audio"),
-  quizSTTController.quizSpeechToText
-);
+//router.post(
+//  "/stt",
+//  upload.single("audio"),
+//  quizSTTController.quizSpeechToText
+//);
+
+
+const multer = require("multer");
+const upload = multer({ dest: "uploads/" });
+
+router.post("/stt", upload.single("audio"), quizSTTController.stt);
 
 
 module.exports = router;

@@ -1,24 +1,30 @@
 const fs = require("fs");
-const path = require("path");
-const { transcribeAudio } = require("./studyController"); 
-// ⬆️ importa ESATTAMENTE il file dove sta la tua funzione
+const OpenAI = require("openai");
 
-exports.quizSpeechToText = async (req, res) => {
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+exports.stt = async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ error: "Nessun audio ricevuto" });
+      return res.status(400).json({ error: "Nessun file audio" });
     }
 
-    const audioPath = req.file.path;
+    const filePath = req.file.path;
 
-    const text = await transcribeAudio(audioPath);
+    const transcript = await openai.audio.transcriptions.create({
+      file: fs.createReadStream(filePath),
+      model: "gpt-4o-transcribe",
+    });
 
-    // 🔥 pulizia file temporaneo
-    fs.unlink(audioPath, () => {});
+    fs.unlinkSync(filePath); // cleanup
 
-    res.json({ text });
+    res.json({
+      text: transcript.text || "",
+    });
   } catch (err) {
-    console.error("❌ QUIZ STT ERROR:", err);
+    console.error("❌ STT BACKEND ERROR:", err);
     res.status(500).json({ error: "Errore trascrizione audio" });
   }
 };
