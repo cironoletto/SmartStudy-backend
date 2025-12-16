@@ -47,7 +47,20 @@ function normalizeQuizJson(quizJson) {
   const title = quizJson?.title || "Quiz generato";
   const description = quizJson?.description || "";
 
-  let questions = Array.isArray(quizJson?.questions) ? quizJson.questions : [];
+ let questions = Array.isArray(quizJson?.questions) ? quizJson.questions : [];
+
+// ✅ assicurati che ci sia ALMENO una domanda open
+const hasOpen = questions.some(q => q.type === "open");
+
+if (!hasOpen && questions.length > 0) {
+  questions.push({
+    type: "open",
+    text: "Spiega con parole tue l'argomento principale del quiz.",
+    idealAnswer: "",
+    points: 1,
+  });
+}
+
 
   // ✅ Compatibilità: se il modello risponde con "options" al posto di "choices"
   questions = questions.map((q) => {
