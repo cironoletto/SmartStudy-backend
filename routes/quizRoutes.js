@@ -12,6 +12,7 @@ const quizSTTController = require("../controllers/quizSTTController");
 const multer = require("multer");
 const audioUpload = multer({ dest: "uploads/" });
 
+
 // Tutto richiede login
 router.use(authMiddleware);
 
@@ -55,6 +56,7 @@ router.post(
   audioUpload.single("audio"),
   quizSTTController.stt
 );
+
 
 module.exports = router;
 
