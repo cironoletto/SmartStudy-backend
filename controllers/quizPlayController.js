@@ -225,16 +225,17 @@ exports.getQuizHistory = async (req, res) => {
     const { rows } = await db.query(
       `
       SELECT
-        q.quizid,
-        q.title,
-        a.attemptid,
-        a.score,
-        a.maxscore,
-        a.ispassed,
-        a.createdat
+  q.quizid AS "quizID",
+  q.title,
+  a.attemptid AS "attemptID",
+  a.score,
+  a.maxscore AS "maxScore",
+  a.ispassed AS "isPassed",
+  a.createdat AS "createdAt"
       FROM attempts a
       JOIN quizzes q ON q.quizid = a.quizid
       WHERE a.userid = $1
+      AND a.score IS NOT NULL
       ORDER BY a.createdat DESC
       `,
       [userID]
