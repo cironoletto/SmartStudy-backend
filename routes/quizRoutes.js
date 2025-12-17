@@ -25,6 +25,8 @@ router.post(
   quizFromOCRController.generateQuizFromImages
 );
 
+// CRONOLOGIA QUIZ (DB)
+router.get("/history", quizPlayController.getQuizHistory);
 // --------------------------
 // QUIZ – lista, dettaglio
 // --------------------------
@@ -56,9 +58,6 @@ router.post(
   audioUpload.single("audio"),
   quizSTTController.stt
 );
-
-// CRONOLOGIA QUIZ (DB)
-router.get("/history", quizPlayController.getQuizHistory);
 
 module.exports = router;
 
