@@ -57,6 +57,8 @@ router.post(
   quizSTTController.stt
 );
 
+// CRONOLOGIA QUIZ (DB)
+router.get("/history", quizPlayController.getQuizHistory);
 
 module.exports = router;
 

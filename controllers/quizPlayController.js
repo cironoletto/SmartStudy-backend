@@ -214,3 +214,37 @@ exports.submitAnswers = async (req, res) => {
   }
 };
 
+
+
+exports.getQuizHistory = async (req, res) => {
+  try {
+    const userID = req.user.userId;
+
+    console.log("📊 QUIZ HISTORY for user:", userID);
+
+    const { rows } = await db.query(
+      `
+      SELECT
+        q.quizid,
+        q.title,
+        a.attemptid,
+        a.score,
+        a.maxscore,
+        a.ispassed,
+        a.createdat
+      FROM attempts a
+      JOIN quizzes q ON q.quizid = a.quizid
+      WHERE a.userid = $1
+      ORDER BY a.createdat DESC
+      `,
+      [userID]
+    );
+
+    console.log("📊 QUIZ HISTORY rows:", rows.length);
+
+    res.json(rows);
+  } catch (err) {
+    console.error("❌ QUIZ HISTORY ERROR:", err);
+    res.status(500).json({ error: "Errore cronologia quiz" });
+  }
+};
