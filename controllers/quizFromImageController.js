@@ -1,7 +1,7 @@
-// controllers/legacyCreateQuizFromImage.js
 const { extractTextFromImages } = require("./localOCR");
 const quizModel = require("../models/quizModel");
 const OpenAI = require("openai");
+const { checkAndIncrement } = require("../services/usageLimitService");
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -14,11 +14,54 @@ exports.createQuizFromImage = async (req, res) => {
       return res.status(401).json({ error: "Utente non autenticato" });
     }
 
-    if (!req.file) {
+    /* ===============================
+       📸 GESTIONE IMMAGINI
+    =============================== */
+
+    // compatibile sia con upload singolo che multiplo
+    const files = req.files || (req.file ? [req.file] : []);
+
+    if (!files.length) {
       return res.status(400).json({ error: "Nessuna immagine caricata" });
     }
 
-    const rawText = await extractTextFromImages([req.file]);
+    // 🔒 LIMITE IMMAGINI QUIZ: 5
+    if (files.length > 5) {
+      return res.status(400).json({
+        error: "IMAGE_LIMIT_EXCEEDED",
+        limit: 5
+      });
+    }
+
+    /* ===============================
+       🧠 LIMITE QUIZ GIORNALIERI
+    =============================== */
+
+    // 🔒 FREE: 2 quiz al giorno
+    const quizLimit = await checkAndIncrement(
+      userID,
+      "quiz_sessions",
+      2
+    );
+
+    if (!quizLimit.allowed) {
+      return res.status(403).json({
+        error: "LIMIT_EXCEEDED",
+        feature: "quiz_sessions",
+        limit: 2,
+        reset: "domani"
+      });
+    }
+
+    /* ===============================
+       🔎 OCR
+    =============================== */
+
+    const rawText = await extractTextFromImages(files);
+
+    /* ===============================
+       🧠 PROMPT QUIZ
+    =============================== */
 
     const prompt = `
 Genera un quiz in formato JSON con ALMENO 5 domande.
@@ -51,9 +94,18 @@ Struttura obbligatoria:
       temperature: 0.3
     });
 
-    const quizJson = JSON.parse(completion.choices[0].message.content);
+    const quizJson = JSON.parse(
+      completion.choices[0].message.content
+    );
 
-    if (!Array.isArray(quizJson.questions) || quizJson.questions.length < 5) {
+    /* ===============================
+       ✅ VALIDAZIONE QUIZ
+    =============================== */
+
+    if (
+      !Array.isArray(quizJson.questions) ||
+      quizJson.questions.length < 5
+    ) {
       return res.status(400).json({
         error: "Non sono riuscito a generare domande valide da queste immagini."
       });
@@ -71,6 +123,10 @@ Struttura obbligatoria:
         error: "Le domande generate non sono strutturate correttamente."
       });
     }
+
+    /* ===============================
+       💾 SALVATAGGIO QUIZ
+    =============================== */
 
     const quizID = await quizModel.createQuizWithQuestions({
       userID,

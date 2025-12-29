@@ -1,89 +1,77 @@
 //-------------------------------------------------------------
-// 🚀 OCR SERVICE – Versione potenziata con Sharp + Debug
+// 🚀 OCR SERVICE – SAFE (ANTI-OOM)
 //-------------------------------------------------------------
 const tesseract = require("node-tesseract-ocr");
 const path = require("path");
-const sharp = require("sharp"); // ⚠️ ASSICURATI DI INSTALLARLO: npm install sharp
+const fs = require("fs");
+const sharp = require("sharp");
 
-// Configurazione Tesseract ottimizzata
+//-------------------------------------------------------------
+// ⚙️ Tesseract config (LOW MEMORY)
+//-------------------------------------------------------------
 const baseConfig = {
   lang: "ita+eng+fra+spa+deu",
   oem: 1,
-  psm: 6, // più stabile per testi da foto
+  psm: 6,
 };
 
 //-------------------------------------------------------------
-// 🧼 PREPROCESSING: migliora contrasto e leggibilità
+// 🧼 PREPROCESS (RIDOTTO + SAFE)
 //-------------------------------------------------------------
 async function preprocessImage(inputPath) {
   const processedPath = inputPath + "_proc.jpg";
 
   try {
-    console.log("🖼 PREPROCESSING:", inputPath);
-
     await sharp(inputPath)
-      .grayscale()       // converte in bianco e nero
-      .normalize()       // aumenta contrasto
-      .sharpen()         // nitidezza delle scritte
+      .resize({ width: 1600, withoutEnlargement: true }) // 🔥 FIX OOM
+      .grayscale()
+      .normalize()
+      .sharpen(0.5)
+      .jpeg({ quality: 85 })
       .toFile(processedPath);
 
     return processedPath;
-
   } catch (err) {
-    console.log("⚠️ SHARP ERROR:", err);
+    console.warn("⚠️ Sharp preprocess failed:", err.message);
     return inputPath; // fallback
   }
 }
 
 //-------------------------------------------------------------
-// 🔍 OCR Singola Immagine
+// 🔍 OCR SINGOLA IMMAGINE (SAFE)
 //-------------------------------------------------------------
 async function ocrSingleImage(filePath) {
+  let processed = null;
+
   try {
-    console.log("📄 OCR → Analizzo:", filePath);
+    processed = await preprocessImage(filePath);
 
-    // Preprocess la foto
-    const processed = await preprocessImage(filePath);
-
-    // OCR
     const text = await tesseract.recognize(processed, baseConfig);
 
-    console.log("🔍 OCR OUTPUT:", JSON.stringify(text));
-
-    return text.trim();
-
+    return (text || "").trim();
   } catch (err) {
-    console.error("❌ OCR ERROR:", err);
+    console.error("❌ OCR ERROR:", err.message);
     return "";
+  } finally {
+    // 🧹 DELETE FILE PREPROCESSATO
+    if (processed && processed !== filePath) {
+      try { fs.unlinkSync(processed); } catch {}
+    }
   }
 }
 
 //-------------------------------------------------------------
-// 🔥 OCR MULTI-IMMAGINE
+// 🔥 OCR MULTI-IMMAGINE (SEQUENZIALE)
 //-------------------------------------------------------------
-exports.extractTextFromImages = async (files) => {
-  try {
-    if (!Array.isArray(files) || files.length === 0) return "";
+exports.extractTextFromImages = async (files = []) => {
+  let finalText = "";
 
-    let finalText = "";
-
-    for (const f of files) {
-      console.log("📦 FILE:", { path: f.path, size: f.size, mimetype: f.mimetype });
-
+  for (const f of files) {
+    try {
       const text = await ocrSingleImage(f.path);
-
-      if (text && text.trim()) {
-        finalText += text.trim() + "\n\n";
-      } else {
-        console.log("⚠️ OCR vuoto per:", f.path);
-      }
-    }
-
-    return (finalText || "").trim();
-  } catch (err) {
-    console.error("❌ extractTextFromImages ERROR:", err);
-    return ""; // 🔥 mai undefined/null
+      if (text) finalText += text + "\n\n";
+    } catch {}
   }
+
+  return finalText.trim();
 };
-
-

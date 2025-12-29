@@ -135,13 +135,24 @@ exports.generateQuizFromImages = async (req, res) => {
       return res.status(400).json({ error: "Nessuna immagine ricevuta" });
     }
 
+    if (req.files.length > 5) {
+      return res.status(400).json({ error: "Troppe immagini" });
+    }
+
     console.log("📸 OCR >>", req.files.length, "immagini");
 
     let rawText = "";
-    try {
-      rawText = await extractTextFromImages(req.files);
-    } catch {
-      rawText = "";
+
+    for (const file of req.files) {
+      try {
+        const text = await extractTextFromImages([file]);
+        rawText += "\n" + (text || "");
+      } catch (e) {
+        console.warn("⚠️ OCR failed:", file.filename);
+      } finally {
+        // 🧹 cleanup SEMPRE
+        fs.unlink(file.path, () => {});
+      }
     }
 
     if (!rawText || rawText.trim().length < 10) {
@@ -163,20 +174,18 @@ exports.generateQuizFromImages = async (req, res) => {
     const quizJson = JSON.parse(completion.choices[0].message.content);
     const normalized = normalizeQuizJson(quizJson);
 
-    const quizData = {
+    const quizID = await quizModel.createQuizWithQuestions({
       userID,
       title: normalized.title,
       description: normalized.description,
       questions: normalized.questions,
-    };
+    });
 
-    const quizID = await quizModel.createQuizWithQuestions(quizData);
-
-    return res.json({
+    res.json({
       quizID,
-      title: quizData.title,
-      description: quizData.description,
-      questions: quizData.questions,
+      title: normalized.title,
+      description: normalized.description,
+      questions: normalized.questions,
     });
   } catch (err) {
     console.error("❌ OCR QUIZ ERROR:", err);

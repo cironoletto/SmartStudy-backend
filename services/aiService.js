@@ -230,3 +230,51 @@ PASSO 5 – Risultato finale
     finalAnswer: content,
   };
 };
+
+exports.scoreOralAnswer = async (referenceText, studentText) => {
+  const prompt = `
+Sei un INSEGNANTE DI SCUOLA.
+
+Valuta l'esposizione orale di uno studente confrontandola con il testo di riferimento.
+
+=== TESTO DI RIFERIMENTO ===
+${referenceText}
+
+=== ESPOSIZIONE DELLO STUDENTE ===
+${studentText}
+
+Valuta usando ESCLUSIVAMENTE questa RUBRICA (0–10 ciascuno):
+
+1. Contenuto (correttezza e completezza)
+2. Chiarezza espositiva
+3. Lessico specifico della materia
+4. Autonomia espressiva (parole proprie)
+
+REGOLE:
+- Sii severo ma equo
+- Non inventare informazioni
+- Non penalizzare piccoli errori grammaticali
+- Usa uno stile da professore
+
+Rispondi SOLO in JSON nel formato:
+
+{
+  "contenuto": 0,
+  "chiarezza": 0,
+  "lessico": 0,
+  "autonomia": 0,
+  "voto_finale": 0,
+  "commento_prof": ""
+}
+`;
+
+  const res = await client.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.2,
+    response_format: { type: "json_object" }
+  });
+
+  return JSON.parse(res.choices[0].message.content);
+};
+

@@ -4,197 +4,145 @@ const db = require("../db");
 const ocrService = require("../services/ocrService");
 const aiService = require("../services/aiService");
 const { generateSummaryAudio } = require("../services/openaiTtsService");
+const { checkAndIncrement } = require("../services/usageLimitService");
 
 const {
   canGenerateTTS,
   incrementTTS,
 } = require("../services/ttsUsageService");
 
-
+/* ===========================================================
+   🔎 RILEVAMENTO MATERIA
+=========================================================== */
 function detectSubjectFromText(text) {
   const t = text.toLowerCase();
 
-  if (
-    t.includes("funzione") ||
-    t.includes("derivata") ||
-    t.includes("asintoto") ||
-    t.includes("integrale")
-  ) {
+  if (["funzione","derivata","asintoto","integrale"].some(k => t.includes(k)))
     return "Matematica";
-  }
 
-  if (
-    t.includes("poesia") ||
-    t.includes("autore") ||
-    t.includes("testo") ||
-    t.includes("analisi del testo")
-  ) {
+  if (["poesia","autore","testo","analisi del testo"].some(k => t.includes(k)))
     return "Italiano";
-  }
 
-  if (
-    t.includes("rivoluzione") ||
-    t.includes("storia") ||
-    t.includes("secolo") ||
-    t.includes("guerra")
-  ) {
+  if (["rivoluzione","storia","secolo","guerra"].some(k => t.includes(k)))
     return "Storia";
-  }
 
-  if (
-    t.includes("chimica") ||
-    t.includes("molecola") ||
-    t.includes("reazione")
-  ) {
+  if (["chimica","molecola","reazione"].some(k => t.includes(k)))
     return "Scienze";
-  }
 
   return "Studio";
 }
 
 /* ===========================================================
-   📸 PROCESS IMAGES → OCR → AI
+   📸 OCR + STUDY
 =========================================================== */
 exports.processFromImages = async (req, res) => {
   try {
     const userID = req.user?.userId;
     if (!userID) return res.status(401).json({ error: "Utente non autenticato" });
 
-    const mode = (req.body.mode || "summary").toLowerCase();
-    console.log("🟦 STUDY mode =", mode);
-    const files = req.files || [];
-
-    if (!files.length) {
-      return res.status(400).json({ error: "Nessuna immagine fornita" });
-    }
-
-    // 1️⃣ OCR
-    const rawText = await ocrService.extractTextFromImages(files);
-
-    // 📘 SUBJECT automatico
-const subject =
-  req.body.subject ||
-  detectSubjectFromText(rawText);
-console.log("🟦 OCR OK, rawText length =", rawText?.length);
-
-    if (!rawText || rawText.length < 15) {
-      return res.status(400).json({
-        error: "Testo OCR troppo breve o non leggibile",
-      });
-    }
-
-   
-    // 2️⃣ Salva sessione
-// 2️⃣ Rileva materia automaticamente
-const detectedSubject =
-  req.body.subject || detectSubjectFromText(rawText);
-
-// 3️⃣ Salva sessione
-const qSession = await db.query(
-  `INSERT INTO study_sessions (userid, subject, type, rawtext, createdat)
-   VALUES ($1, $2, $3, $4, NOW())
-   RETURNING sessionid`,
-  [userID, detectedSubject, mode, rawText]
+    /* 🔒 LIMITE STUDY FREE: 2 SESSIONI / GIORNO */
+const studyLimit = await checkAndIncrement(
+  userID,
+  "study_sessions",
+  2
 );
 
+if (!studyLimit.allowed) {
+  return res.status(403).json({
+    error: "STUDY_DAILY_LIMIT",
+    feature: "study",
+    reset: "domani"
+  });
+}
+
+    const mode = (req.body.mode || "summary").toLowerCase();
+    const files = req.files || [];
+
+    if (!files.length)
+      return res.status(400).json({ error: "Nessuna immagine fornita" });
+
+    if (files.length > 3)
+      return res.status(400).json({ error: "Puoi caricare massimo 3 immagini" });
+
+    /* OCR SEQUENZIALE */
+    let rawText = "";
+    for (const file of files) {
+      try {
+        const text = await ocrService.extractTextFromImages([file]);
+        rawText += "\n" + (text || "");
+      } finally {
+        try { fs.unlinkSync(file.path); } catch {}
+      }
+    }
+
+    if (!rawText || rawText.length < 15)
+      return res.status(400).json({ error: "Testo OCR troppo breve o non leggibile" });
+
+    const subject = detectSubjectFromText(rawText);
+
+    /* SALVA SESSIONE */
+    const qSession = await db.query(
+      `INSERT INTO study_sessions (userid, subject, type, rawtext, createdat)
+       VALUES ($1,$2,$3,$4,NOW())
+       RETURNING sessionid`,
+      [userID, subject, mode, rawText]
+    );
 
     const sessionID = qSession.rows[0].sessionid;
-    console.log("🟩 study_sessions INSERT OK sessionID =", sessionID);
-
     const payload = { sessionID };
 
     /* ===================== SUMMARY ===================== */
- if (mode === "summary") {
-  console.log("🧠 ENTER SUMMARY BLOCK sessionID =", sessionID);
+    if (mode === "summary") {
+      const summary = await aiService.generateSummary(rawText);
+      let audioUrl = null;
 
-  const summary = await aiService.generateSummary(rawText);
-  console.log("🧠 SUMMARY GENERATED length =", summary?.length);
+      /* 🔒 BLOCCO TTS FREE */
+      const ttsCheck = await checkAndIncrement(userID, "tts_audio", 0);
+      if (ttsCheck.allowed) {
+        audioUrl = await generateSummaryAudio(summary, sessionID);
+        if (audioUrl) await incrementTTS(userID);
+      }
 
-  let audioUrl = null;
+      await db.query(
+        `INSERT INTO study_summaries (sessionid, summary, ailevel, audiourl)
+         VALUES ($1,$2,'summary',$3)`,
+        [sessionID, summary, audioUrl]
+      );
 
-  console.log("🎛 canGenerateTTS: start");
-  const okTts = await canGenerateTTS(userID);
-  console.log("🎛 canGenerateTTS: result =", okTts);
-
-  if (okTts) {
-    console.log("🎧 generateSummaryAudio: start");
-    audioUrl = await generateSummaryAudio(summary, sessionID);
-    console.log("🎧 generateSummaryAudio: result =", audioUrl);
-
-    if (audioUrl) {
-      console.log("📈 incrementTTS: start");
-      await incrementTTS(userID);
-      console.log("📈 incrementTTS: done");
+      payload.summary = summary;
+      payload.audioUrl = audioUrl;
     }
-  }
 
-  console.log("📝 INSERT study_summaries: start");
-  await db.query(
-    `INSERT INTO study_summaries (sessionid, summary, ailevel, audiourl)
-     VALUES ($1, $2, 'summary', $3)`,
-    [sessionID, summary, audioUrl]
-  );
-  console.log("📝 INSERT study_summaries: done");
+    /* ===================== SCIENTIFIC ===================== */
+    if (mode === "scientific") {
+      const level = req.body.level || "guided";
+      let solution;
 
-  payload.summary = summary;
-  payload.audioUrl = audioUrl;
-}
+      try {
+        solution = level === "theory"
+          ? await aiService.explainScientificTheory(rawText)
+          : await aiService.solveScientificGuided(rawText);
+      } catch {
+        solution = { text: "Spiegazione teorica standard." };
+      }
 
- /* ===================== SCIENTIFIC ===================== */
-/* ===================== SCIENTIFIC ===================== */
-if (mode === "scientific") {
-  const level = req.body.level || "guided";
-  let solution;
+      await db.query(
+        `INSERT INTO study_problems
+         (sessionid, detectedtype, problemtext, solutionsteps, finalanswer)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [
+          sessionID,
+          level,
+          rawText,
+          solution.steps || [],
+          solution.finalAnswer || solution.text
+        ]
+      );
 
-  if (level === "theory") {
-    solution = await aiService.explainScientificTheory(rawText);
-} else {
-  try {
-    solution = await aiService.solveScientificGuided(rawText);
-
-  } catch (errGuided) {
-    console.warn("⚠️ Guided non valido, fallback a teoria:", errGuided.message);
-
-    try {
-      solution = await aiService.explainScientificTheory(rawText);
-      payload.level = "theory";
-
-    } catch (errTheory) {
-      console.warn("⚠️ Theory non valida, fallback safe:", errTheory.message);
-
-      // 🔥 ULTIMO LIVELLO: SAFE THEORY (senza throw)
-      solution = {
-        text: "Il problema richiede l’analisi teorica di una funzione razionale con parametri. In questi casi si studiano gli asintoti, le condizioni di tangenza e le proprietà delle derivate applicando metodi standard dell’analisi matematica, evitando ipotesi arbitrarie."
-      };
-
-      payload.level = "theory";
+      payload.level = level;
+      payload.solutionSteps = solution.steps || [];
+      payload.finalAnswer = solution.finalAnswer || solution.text;
     }
-  }
-}
-
-
-  // 📝 salva SEMPRE
-if (level !== "theory" || solution.steps) {
-  await db.query(
-    `INSERT INTO study_problems
-     (sessionid, detectedtype, problemtext, solutionsteps, finalanswer)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [
-      sessionID,
-      level,
-      rawText,
-      solution.steps || [],
-      solution.finalAnswer || solution.text
-    ]
-  );
-}
-
-
-  payload.level = payload.level || level;
-  payload.solutionSteps = solution.steps || [];
-  payload.finalAnswer = solution.finalAnswer || solution.text;
-}
-
 
     /* ===================== ORAL ===================== */
     if (mode === "oral") {
@@ -202,46 +150,23 @@ if (level !== "theory" || solution.steps) {
 
       await db.query(
         `INSERT INTO study_summaries (sessionid, summary, ailevel)
-         VALUES ($1, $2, 'oral')`,
+         VALUES ($1,$2,'oral')`,
         [sessionID, summary]
       );
 
       payload.summary = summary;
     }
-console.log("✅ RESPONDING payload keys =", Object.keys(payload));
 
     res.json(payload);
 
   } catch (err) {
-  console.error("❌ processFromImages Error FULL:", err);
-
-  let userMessage = "Non siamo riusciti a completare l’analisi.";
-
-  if (err.message?.includes("ipotesi")) {
-    userMessage =
-      "Il problema richiede dati aggiuntivi o è ambiguo. Prova a caricare un esercizio più completo.";
-  } else if (err.message?.includes("teorica")) {
-    userMessage =
-      "Non è stato possibile fornire una spiegazione affidabile per questo esercizio.";
-  } else if (err.code === "23502") {
-    userMessage =
-      "Si è verificato un problema interno durante il salvataggio dei risultati.";
-  }
-
-  res.status(200).json({
-    warning: true,
-    message: userMessage,
-  });
-}
-finally {
-    (req.files || []).forEach(f => {
-      try { fs.unlinkSync(f.path); } catch {}
-    });
+    console.error("❌ processFromImages:", err);
+    res.status(500).json({ error: "Errore elaborazione studio" });
   }
 };
 
 /* ===========================================================
-   🎙 VALUTAZIONE ORALE
+   🎙 VALUTAZIONE ORALE (CON LIMITE)
 =========================================================== */
 exports.evaluateOral = async (req, res) => {
   try {
@@ -249,22 +174,34 @@ exports.evaluateOral = async (req, res) => {
     const audioFile = req.file;
     const sessionID = req.body.sessionID;
 
-    if (!audioFile) {
+    if (!audioFile)
       return res.status(400).json({ error: "File audio mancante" });
+
+    /* 🔒 LIMITE FREE: 1 AL GIORNO */
+    const limitCheck = await checkAndIncrement(
+      userID,
+      "oral_evaluations",
+      1
+    );
+
+    if (!limitCheck.allowed) {
+      return res.status(403).json({
+        error: "LIMIT_EXCEEDED",
+        feature: "oral_evaluations",
+        reset: "domani"
+      });
     }
 
     const q = await db.query(
-      `SELECT summary
-       FROM study_summaries
-       WHERE sessionid = $1
-       ORDER BY summaryid DESC
-       LIMIT 1`,
+      `SELECT summary FROM study_summaries
+       WHERE sessionid=$1
+       ORDER BY summaryid DESC LIMIT 1`,
       [sessionID]
     );
 
     const reference = q.rows[0]?.summary || "";
-    const userText = await aiService.transcribeAudio(audioFile.path);
-    const evalResult = await aiService.scoreOralAnswer(reference, userText);
+    const transcript = await aiService.transcribeAudio(audioFile.path);
+    const rubric = await aiService.scoreOralAnswer(reference, transcript);
 
     await db.query(
       `INSERT INTO study_oral_evaluations
@@ -275,13 +212,13 @@ exports.evaluateOral = async (req, res) => {
         userID,
         reference,
         audioFile.path,
-        evalResult.feedback,
-        evalResult.score,
-        userText,
+        rubric.commento_prof,
+        rubric.voto_finale,
+        transcript
       ]
     );
 
-    res.json(evalResult);
+    res.json({ rubric, transcript });
 
   } catch (err) {
     console.error("❌ evaluateOral:", err);
@@ -292,129 +229,71 @@ exports.evaluateOral = async (req, res) => {
 };
 
 /* ===========================================================
-   📚 LISTA SESSIONI
+   📚 SESSIONI / STATS / RATING (INVARIATI)
 =========================================================== */
+
 exports.getStudySessions = async (req, res) => {
-  try {
-    const userID = req.user.userId;
-
-    const q = await db.query(
-      `SELECT
-         s.sessionid AS "sessionID",
-         s.subject,
-         s.type,
-         s.createdat AS "createdAt",
-         s.rating,
-         sm.summary,
-         sm.audiourl AS "audioUrl"
-       FROM study_sessions s
-       LEFT JOIN LATERAL (
-         SELECT summary, audiourl
-         FROM study_summaries
-         WHERE sessionid = s.sessionid
-         ORDER BY summaryid DESC
-         LIMIT 1
-       ) sm ON true
-       WHERE s.userid = $1
-       ORDER BY s.createdat DESC`,
-      [userID]
-    );
-console.log("🟨 getStudySessions rows =", q.rows.length);
-console.log("🟨 first row preview =", q.rows[0]);
-
-    res.json(q.rows);
-  } catch (err) {
-    console.error("❌ getStudySessions:", err);
-    res.status(500).json({ error: "Errore caricamento sessioni" });
-  }
-};
-
-/* ===========================================================
-   📘 DETTAGLIO SESSIONE
-=========================================================== */
-exports.getStudySession = async (req, res) => {
-  try {
-    const { sessionID } = req.params;
-    const userID = req.user.userId;
-
-    const q = await db.query(
-      `SELECT
-         s.sessionid AS "sessionID",
-         s.subject,
-         s.type,
-         s.createdat AS "createdAt",
-         s.rating,
-         sm.summary,
-         sm.audiourl AS "audioUrl",
-         sp.solutionsteps AS "solutionSteps",
-         sp.finalanswer AS "finalAnswer"
-       FROM study_sessions s
-       LEFT JOIN LATERAL (
-         SELECT summary, audiourl
-         FROM study_summaries
-         WHERE sessionid = s.sessionid
-         ORDER BY summaryid DESC
-         LIMIT 1
-       ) sm ON true
-       LEFT JOIN LATERAL (
-         SELECT solutionsteps, finalanswer
-         FROM study_problems
-         WHERE sessionid = s.sessionid
-         ORDER BY problemid DESC
-         LIMIT 1
-       ) sp ON true
-       WHERE s.sessionid = $1 AND s.userid = $2`,
-      [sessionID, userID]
-    );
-
-    if (!q.rows.length) {
-      return res.status(404).json({ error: "Sessione non trovata" });
-    }
-console.log("🟨 getStudySession result =", q.rows[0]);
-
-    res.json(q.rows[0]);
-  } catch (err) {
-    console.error("❌ getStudySession:", err);
-    res.status(500).json({ error: "Errore caricamento sessione" });
-  }
-};
-
-/* ===========================================================
-   ⭐ RATING
-=========================================================== */
-exports.setRating = async (req, res) => {
-  const { sessionID } = req.params;
-  const { rating } = req.body;
-  const userID = req.user.userId;
-
-  await db.query(
-    `UPDATE study_sessions
-     SET rating = $1
-     WHERE sessionid = $2 AND userid = $3`,
-    [rating, sessionID, userID]
-  );
-
-  res.json({ success: true });
-};
-
-/* ===========================================================
-   📊 STATISTICHE
-=========================================================== */
-exports.getStudyStats = async (req, res) => {
-  const userID = req.user.userId;
-
   const q = await db.query(
-    `SELECT COUNT(*) total, AVG(rating) avg
-     FROM study_sessions WHERE userid = $1`,
-    [userID]
+    `SELECT s.sessionid AS "sessionID", s.subject, s.type, s.createdat AS "createdAt",
+            s.rating, sm.summary, sm.audiourl AS "audioUrl"
+     FROM study_sessions s
+     LEFT JOIN LATERAL (
+       SELECT summary, audiourl FROM study_summaries
+       WHERE sessionid=s.sessionid
+       ORDER BY summaryid DESC LIMIT 1
+     ) sm ON true
+     WHERE s.userid=$1
+     ORDER BY s.createdat DESC`,
+    [req.user.userId]
   );
+  res.json(q.rows);
+};
+
+exports.getStudySession = async (req, res) => {
+  const q = await db.query(
+    `SELECT s.sessionid AS "sessionID", s.subject, s.type, s.createdat AS "createdAt",
+            s.rating, sm.summary, sm.audiourl AS "audioUrl",
+            sp.solutionsteps AS "solutionSteps", sp.finalanswer AS "finalAnswer"
+     FROM study_sessions s
+     LEFT JOIN LATERAL (
+       SELECT summary, audiourl FROM study_summaries
+       WHERE sessionid=s.sessionid
+       ORDER BY summaryid DESC LIMIT 1
+     ) sm ON true
+     LEFT JOIN LATERAL (
+       SELECT solutionsteps, finalanswer FROM study_problems
+       WHERE sessionid=s.sessionid
+       ORDER BY problemid DESC LIMIT 1
+     ) sp ON true
+     WHERE s.sessionid=$1 AND s.userid=$2`,
+    [req.params.sessionID, req.user.userId]
+  );
+
+  if (!q.rows.length)
+    return res.status(404).json({ error: "Sessione non trovata" });
 
   res.json(q.rows[0]);
 };
 
-exports.getGlobalStats = async (_req, res) => {
-  const q = await db.query(
-    `SELECT COUNT(*) total FROM study_sessions`
+exports.setRating = async (req, res) => {
+  await db.query(
+    `UPDATE study_sessions SET rating=$1
+     WHERE sessionid=$2 AND userid=$3`,
+    [req.body.rating, req.params.sessionID, req.user.userId]
   );
+  res.json({ success: true });
+};
+
+exports.getStudyStats = async (req, res) => {
+  const q = await db.query(
+    `SELECT COUNT(*) total, AVG(rating) avg
+     FROM study_sessions WHERE userid=$1`,
+    [req.user.userId]
+  );
+  res.json(q.rows[0]);
+};
+
+exports.getGlobalStats = async (_req, res) => {
+  const q = await db.query(`SELECT COUNT(*) total FROM study_sessions`);
   res.json(q.rows[0]);
 };
