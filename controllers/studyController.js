@@ -59,20 +59,16 @@ exports.processFromImages = async (req, res) => {
 
     const isPro = false; // 🔜 collegare a subscription
     const DAILY_LIMIT = isPro ? 10 : (FREE_LIMITS[mode] ?? 1);
-    const featureKey = `study_${mode}`; // es: study_oral
+    const featureKey = `study_${mode}`;
 
-    // ✅ 1️⃣ CHECK (NON incrementa)
-    const limitCheck = await checkLimit(
-      userID,
-      featureKey,
-      DAILY_LIMIT
-    );
+    // ✅ CHECK (non incrementa)
+    const limitCheck = await checkLimit(userID, featureKey, DAILY_LIMIT);
 
     if (!limitCheck.allowed) {
       return res.status(403).json({
         error: "STUDY_DAILY_LIMIT",
         feature: mode,
-        remaining: 0,
+        remaining: limitCheck.remaining ?? 0,
         limit: DAILY_LIMIT,
         isPro,
         reset: "domani",
@@ -119,7 +115,7 @@ exports.processFromImages = async (req, res) => {
     /* ---------------- AI ---------------- */
     const payload = {
       sessionID,
-      remaining: limitCheck.remaining - 1,
+      remaining: Math.max(0, (limitCheck.remaining ?? DAILY_LIMIT) - 1),
       limit: DAILY_LIMIT,
       isPro,
     };
@@ -138,7 +134,7 @@ exports.processFromImages = async (req, res) => {
       payload.summary = await aiService.generateSummary(rawText);
     }
 
-    // ✅ 2️⃣ INCREMENTO SOLO SE TUTTO È ANDATO A BUON FINE
+    // ✅ incrementa SOLO se tutto è andato a buon fine
     await incrementUsage(userID, featureKey);
 
     return res.json(payload);
@@ -150,7 +146,7 @@ exports.processFromImages = async (req, res) => {
 };
 
 /* ===========================================================
-   🎙 VALUTAZIONE ORALE (INVARIATA)
+   🎙 VALUTAZIONE ORALE
 =========================================================== */
 exports.evaluateOral = async (req, res) => {
   try {
@@ -162,11 +158,7 @@ exports.evaluateOral = async (req, res) => {
       return res.status(400).json({ error: "File audio mancante" });
     }
 
-    const limitCheck = await checkLimit(
-      userID,
-      "oral_evaluations",
-      1
-    );
+    const limitCheck = await checkLimit(userID, "oral_evaluations", 1);
 
     if (!limitCheck.allowed) {
       return res.status(403).json({
@@ -212,4 +204,84 @@ exports.evaluateOral = async (req, res) => {
   } finally {
     try { fs.unlinkSync(req.file?.path); } catch {}
   }
+};
+
+/* ===========================================================
+   📚 CRONOLOGIA SESSIONI
+=========================================================== */
+exports.getStudySessions = async (req, res) => {
+  const userID = req.user.userId;
+
+  const q = await db.query(
+    `SELECT sessionid AS "sessionID",
+            subject,
+            type,
+            createdat AS "createdAt",
+            rating,
+            audio_url AS "audioUrl"
+     FROM study_sessions
+     WHERE userid = $1
+     ORDER BY createdat DESC`,
+    [userID]
+  );
+
+  res.json(q.rows);
+};
+
+exports.getStudySession = async (req, res) => {
+  const userID = req.user.userId;
+  const { sessionID } = req.params;
+
+  const q = await db.query(
+    `SELECT *
+     FROM study_sessions
+     WHERE sessionid = $1 AND userid = $2`,
+    [sessionID, userID]
+  );
+
+  res.json(q.rows[0] || null);
+};
+
+/* ===========================================================
+   ⭐ RATING
+=========================================================== */
+exports.setRating = async (req, res) => {
+  const userID = req.user.userId;
+  const { sessionID } = req.params;
+  const { rating } = req.body;
+
+  await db.query(
+    `UPDATE study_sessions
+     SET rating = $1
+     WHERE sessionid = $2 AND userid = $3`,
+    [rating, sessionID, userID]
+  );
+
+  res.json({ ok: true });
+};
+
+/* ===========================================================
+   📊 STATISTICHE
+=========================================================== */
+exports.getStudyStats = async (req, res) => {
+  const userID = req.user.userId;
+
+  const q = await db.query(
+    `SELECT COUNT(*)::int AS total,
+            AVG(rating)::float AS avg_rating
+     FROM study_sessions
+     WHERE userid = $1`,
+    [userID]
+  );
+
+  res.json(q.rows[0]);
+};
+
+exports.getGlobalStats = async (_req, res) => {
+  const q = await db.query(
+    `SELECT COUNT(*)::int AS total_sessions
+     FROM study_sessions`
+  );
+
+  res.json(q.rows[0]);
 };
