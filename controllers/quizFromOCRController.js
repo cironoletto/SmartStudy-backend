@@ -1,6 +1,6 @@
 // controllers/quizFromOCRController.js
 console.log("🔥 USING quizFromOCRController.js VERSION PG");
-
+const fs = require("fs"); // ✅ AGGIUNGI QUESTO
 const OpenAI = require("openai");
 const { extractTextFromImages } = require("./localOCR");
 const quizModel = require("../models/quizModel");
@@ -135,7 +135,7 @@ exports.generateQuizFromImages = async (req, res) => {
       return res.status(400).json({ error: "Nessuna immagine ricevuta" });
     }
 
-    if (req.files.length > 5) {
+    if (req.files.length > 3) {
       return res.status(400).json({ error: "Troppe immagini" });
     }
 
@@ -151,7 +151,10 @@ exports.generateQuizFromImages = async (req, res) => {
         console.warn("⚠️ OCR failed:", file.filename);
       } finally {
         // 🧹 cleanup SEMPRE
-        fs.unlink(file.path, () => {});
+        try {
+  fs.unlinkSync(file.path);
+} catch {}
+
       }
     }
 
