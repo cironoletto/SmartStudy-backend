@@ -95,3 +95,45 @@ exports.getQuizAttempts = async (req, res) => {
     res.status(500).json({ error: "Errore nel recupero dei tentativi" });
   }
 };
+
+exports.createQuizFromImages = async (req, res) => {
+  try {
+    const userID = req.user.userId;
+    const files = req.files || [];
+
+    if (!files.length) {
+      return res.status(400).json({ error: "Nessuna immagine" });
+    }
+
+    // OCR
+    let rawText = "";
+    for (const file of files) {
+      rawText += await ocrService.extractTextFromImages([file]);
+      fs.unlinkSync(file.path);
+    }
+
+    if (rawText.length < 20) {
+      return res.status(400).json({ error: "Testo OCR insufficiente" });
+    }
+
+    // AI → quiz
+    const quizData = await aiService.generateQuizFromText(rawText);
+
+    // salva quiz
+    const quizID = await quizModel.createQuizFromAI(
+      userID,
+      quizData.title,
+      quizData.questions
+    );
+
+    res.json({
+      quizID,
+      title: quizData.title,
+      questions: quizData.questions,
+    });
+
+  } catch (err) {
+    console.error("createQuizFromImages ERROR:", err);
+    res.status(500).json({ error: "Errore generazione quiz" });
+  }
+};

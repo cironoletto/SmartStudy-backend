@@ -115,7 +115,7 @@ exports.processFromImages = async (req, res) => {
     /* ---------------- AI ---------------- */
     const payload = {
       sessionID,
-      remaining: Math.max(0, (limitCheck.remaining ?? DAILY_LIMIT) - 1),
+      remaining: limitCheck.remaining,
       limit: DAILY_LIMIT,
       isPro,
     };
@@ -240,6 +240,42 @@ exports.getStudySession = async (req, res) => {
   );
 
   res.json(q.rows[0] || null);
+};
+
+exports.getOralStudyDetail = async (req, res) => {
+  const userID = req.user.userId;
+  const { sessionID } = req.params;
+
+  // sessione
+  const sessionQ = await db.query(
+    `SELECT sessionid, rawtext
+     FROM study_sessions
+     WHERE sessionid = $1 AND userid = $2 AND type = 'oral'`,
+    [sessionID, userID]
+  );
+
+  if (!sessionQ.rows.length) {
+    return res.status(404).json({ error: "Sessione non trovata" });
+  }
+
+  // valutazioni
+  const evalQ = await db.query(
+    `SELECT 
+       id,
+       score,
+       aifeedback AS comment,
+       createdat
+     FROM study_oral_evaluations
+     WHERE sessionid = $1
+     ORDER BY createdat DESC`,
+    [sessionID]
+  );
+
+  res.json({
+    sessionID,
+    summary: sessionQ.rows[0].rawtext,
+    evaluations: evalQ.rows,
+  });
 };
 
 /* ===========================================================
