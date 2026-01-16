@@ -249,3 +249,26 @@ exports.getQuizHistory = async (req, res) => {
     res.status(500).json({ error: "Errore cronologia quiz" });
   }
 };
+
+exports.getQuizAttemptDetail = async (req, res) => {
+  try {
+    const userID = req.user.userId;
+    const quizID = parseInt(req.params.quizID, 10);
+    const attemptID = parseInt(req.params.attemptID, 10);
+
+    const data = await quizModel.getAttemptDetail(
+      quizID,
+      attemptID,
+      userID
+    );
+
+    if (!data) {
+      return res.status(404).json({ error: "Tentativo non trovato" });
+    }
+
+    res.json(data);
+  } catch (err) {
+    console.error("getQuizAttemptDetail ERROR:", err);
+    res.status(500).json({ error: "Errore recupero tentativo" });
+  }
+};

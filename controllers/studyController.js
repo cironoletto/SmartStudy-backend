@@ -113,22 +113,41 @@ exports.processFromImages = async (req, res) => {
     const sessionID = qSession.rows[0].sessionid;
 
     /* ---------------- AI ---------------- */
-    const payload = {
-      sessionID,
-      remaining: limitCheck.remaining,
-      limit: DAILY_LIMIT,
-      isPro,
-    };
+   const payload = {
+  sessionID,
+  remaining: limitCheck.remaining,
+  limit: DAILY_LIMIT,
+  isPro,
+  ocrText: rawText, // 👁️ PREVIEW OCR
+};
+
 
     if (mode === "summary") {
       payload.summary = await aiService.generateSummary(rawText);
     }
 
     if (mode === "scientific") {
-      const solution = await aiService.solveScientificGuided(rawText);
-      payload.solutionSteps = solution.steps;
-      payload.finalAnswer = solution.finalAnswer;
+  try {
+    const solution = await aiService.solveScientificGuided(rawText);
+
+    if (!solution || !solution.finalAnswer) {
+      return res.status(400).json({
+        error: "SCIENTIFIC_NOT_SOLVABLE",
+        message: "Impossibile risolvere il problema scientifico",
+      });
     }
+
+    payload.solutionSteps = solution.steps || [];
+    payload.finalAnswer = solution.finalAnswer;
+  } catch (e) {
+    console.error("❌ solveScientificGuided:", e);
+    return res.status(400).json({
+      error: "SCIENTIFIC_FAILED",
+      message: "Errore durante la risoluzione scientifica",
+    });
+  }
+}
+
 
     if (mode === "oral") {
       payload.summary = await aiService.generateSummary(rawText);
@@ -246,7 +265,7 @@ exports.getOralStudyDetail = async (req, res) => {
   const userID = req.user.userId;
   const { sessionID } = req.params;
 
-  // sessione
+  // 🔎 sessione
   const sessionQ = await db.query(
     `SELECT sessionid, rawtext
      FROM study_sessions
@@ -258,7 +277,7 @@ exports.getOralStudyDetail = async (req, res) => {
     return res.status(404).json({ error: "Sessione non trovata" });
   }
 
-  // valutazioni
+  // 📊 valutazioni
   const evalQ = await db.query(
     `SELECT 
        id,
@@ -271,10 +290,26 @@ exports.getOralStudyDetail = async (req, res) => {
     [sessionID]
   );
 
+  // 🔐 LIMITE GIORNALIERO (COME STUDY)
+  const DAILY_LIMIT = 1; // FREE
+  const isPro = false;   // 🔜 collegare subscription
+
+  const limitCheck = await checkLimit(
+    userID,
+    "oral_evaluations",
+    DAILY_LIMIT
+  );
+
   res.json({
     sessionID,
     summary: sessionQ.rows[0].rawtext,
     evaluations: evalQ.rows,
+
+    // ➕ NUOVI CAMPI (frontend-ready)
+    dailyLimitReached: !limitCheck.allowed,
+    remaining: limitCheck.remaining,
+    limit: DAILY_LIMIT,
+    isPro,
   });
 };
 

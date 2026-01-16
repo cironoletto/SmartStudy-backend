@@ -236,3 +236,57 @@ exports.saveAnswersAndScore = async (quizID, attemptID, userID, answers) => {
     client.release();
   }
 };
+
+/* -----------------------------------------------------------
+   ATTEMPT DETAIL (READ ONLY)
+------------------------------------------------------------ */
+exports.getAttemptDetail = async (quizID, attemptID, userID) => {
+  // quiz
+  const quizQ = await db.query(
+    `
+    SELECT title
+    FROM quizzes
+    WHERE quizid = $1 AND userid = $2
+    `,
+    [quizID, userID]
+  );
+
+  if (!quizQ.rows.length) return null;
+
+  // attempt
+  const attemptQ = await db.query(
+    `
+    SELECT score, maxscore, startedat
+    FROM attempts
+    WHERE attemptid = $1 AND quizid = $2 AND userid = $3
+    `,
+    [attemptID, quizID, userID]
+  );
+
+  if (!attemptQ.rows.length) return null;
+
+  // answers + questions
+  const detailQ = await db.query(
+    `
+    SELECT
+      q.questionid       AS "questionID",
+      q.questiontext     AS "questionText",
+      a.iscorrect        AS "correct",
+      a.answertext       AS "userAnswer",
+      q.correctanswer    AS "correctAnswer"
+    FROM answers a
+    JOIN questions q ON q.questionid = a.questionid
+    WHERE a.attemptid = $1
+    ORDER BY q.questionid
+    `,
+    [attemptID]
+  );
+
+  return {
+    quiz: {
+      title: quizQ.rows[0].title,
+    },
+    attempt: attemptQ.rows[0],
+    details: detailQ.rows,
+  };
+};

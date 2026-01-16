@@ -209,27 +209,46 @@ PASSO 4 – Risoluzione
 PASSO 5 – Risultato finale
 `;
 
-  const res = await client.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [
-      { role: "system", content: "Sei un professore di matematica." },
-      { role: "user", content: text },
-      { role: "user", content: prompt },
-    ],
-  });
+  try {
+    const res = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: "Sei un professore di matematica." },
+        { role: "user", content: text },
+        { role: "user", content: prompt },
+      ],
+    });
 
-  const content = res.choices[0].message.content;
+    const content = res.choices[0].message.content;
 
-  // 🔒 FILTRO SVOLGIMENTO
-  if (containsInvalidAssumptions(content)) {
-    throw new Error("Svolgimento con ipotesi arbitrarie");
+    // 🔒 FILTRO SVOLGIMENTO
+    if (containsInvalidAssumptions(content)) {
+      throw new Error("SCIENTIFIC_NOT_SOLVABLE");
+    }
+
+    return {
+      steps: content.split("\n\n"),
+      finalAnswer: content,
+      fallback: false,
+    };
+
+  } catch (e) {
+    // 🟡 FALLBACK CONTROLLATO → RIASSUNTO
+    console.warn("⚠️ Scientific fallback to summary");
+
+    const summary = await exports.generateSummary(text);
+
+    return {
+      steps: [
+        "Il testo non consente una risoluzione scientifica rigorosa.",
+        "Segue una spiegazione riassuntiva del contenuto:",
+      ],
+      finalAnswer: summary,
+      fallback: true,
+    };
   }
-
-  return {
-    steps: content.split("\n\n"),
-    finalAnswer: content,
-  };
 };
+
 
 exports.scoreOralAnswer = async (referenceText, studentText) => {
   const prompt = `

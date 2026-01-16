@@ -12,7 +12,6 @@ const quizSTTController = require("../controllers/quizSTTController");
 const multer = require("multer");
 const audioUpload = multer({ dest: "uploads/" });
 
-
 // Tutto richiede login
 router.use(authMiddleware);
 
@@ -25,8 +24,20 @@ router.post(
   quizFromOCRController.generateQuizFromImages
 );
 
+// --------------------------
 // CRONOLOGIA QUIZ (DB)
+// --------------------------
 router.get("/history", quizPlayController.getQuizHistory);
+
+// --------------------------
+// 🔍 DETTAGLIO TENTATIVO (READ ONLY) ✅ NUOVO
+// ⚠️ DEVE stare PRIMA di /:quizID/attempts
+// --------------------------
+router.get(
+  "/:quizID/attempt/:attemptID",
+  quizPlayController.getQuizAttemptDetail
+);
+
 // --------------------------
 // QUIZ – lista, dettaglio
 // --------------------------
@@ -60,8 +71,3 @@ router.post(
 );
 
 module.exports = router;
-
-
-
-
-
