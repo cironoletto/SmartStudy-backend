@@ -5,7 +5,7 @@ const db = require("../db");
  * Usato PRIMA di elaborare (preview / OCR / AI)
  */
 async function checkLimit(userID, feature, limit) {
-  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date();
 
   const q = await db.query(
     `SELECT count, reset_at
@@ -14,7 +14,6 @@ async function checkLimit(userID, feature, limit) {
     [userID, feature]
   );
 
-  // Prima volta → tutto disponibile
   if (q.rows.length === 0) {
     return {
       allowed: limit > 0,
@@ -23,16 +22,16 @@ async function checkLimit(userID, feature, limit) {
   }
 
   const { count, reset_at } = q.rows[0];
+  const resetAt = new Date(reset_at);
 
-  // Nuovo giorno → reset virtuale
-  if (reset_at < today) {
+  // 🔥 reset automatico corretto
+  if (now >= resetAt) {
     return {
       allowed: limit > 0,
       remaining: limit,
     };
   }
 
-  // Limite raggiunto
   if (count >= limit) {
     return {
       allowed: false,
@@ -46,12 +45,13 @@ async function checkLimit(userID, feature, limit) {
   };
 }
 
+
 /**
  * ✅ INCREMENTO REALE
  * Usato SOLO dopo successo (AI / OCR completato)
  */
 async function incrementUsage(userID, feature) {
-  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date();
 
   const q = await db.query(
     `SELECT count, reset_at
@@ -60,25 +60,34 @@ async function incrementUsage(userID, feature) {
     [userID, feature]
   );
 
-  // Prima volta → crea riga
+  // Prima volta
   if (q.rows.length === 0) {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+
     await db.query(
       `INSERT INTO usage_limits (userid, feature, count, reset_at)
        VALUES ($1, $2, 1, $3)`,
-      [userID, feature, today]
+      [userID, feature, tomorrow]
     );
     return;
   }
 
   const { reset_at } = q.rows[0];
+  const resetAt = new Date(reset_at);
 
-  // Nuovo giorno → reset + 1
-  if (reset_at < today) {
+  // 🔥 nuovo giorno → reset + 1
+  if (now >= resetAt) {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+
     await db.query(
       `UPDATE usage_limits
        SET count = 1, reset_at = $3
        WHERE userid = $1 AND feature = $2`,
-      [userID, feature, today]
+      [userID, feature, tomorrow]
     );
     return;
   }
