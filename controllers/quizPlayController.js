@@ -256,17 +256,49 @@ exports.getQuizAttemptDetail = async (req, res) => {
     const quizID = parseInt(req.params.quizID, 10);
     const attemptID = parseInt(req.params.attemptID, 10);
 
-    const data = await quizModel.getAttemptDetail(
-      quizID,
-      attemptID,
-      userID
+    // Tentativo
+    const attemptRes = await db.query(
+      `
+      SELECT
+        a.attemptid,
+        a.quizid,
+        a.score,
+        a.maxscore,
+        a.startedat,
+        a.completedat
+      FROM attempts a
+      WHERE a.attemptid = $1
+        AND a.quizid = $2
+        AND a.userid = $3
+      `,
+      [attemptID, quizID, userID]
     );
 
-    if (!data) {
+    if (attemptRes.rows.length === 0) {
       return res.status(404).json({ error: "Tentativo non trovato" });
     }
 
-    res.json(data);
+    // Risposte
+    const answersRes = await db.query(
+      `
+      SELECT
+        an.questionid,
+        q.questiontext,
+        an.answertext,
+        an.iscorrect,
+        an.score
+      FROM answers an
+      JOIN questions q ON q.questionid = an.questionid
+      WHERE an.attemptid = $1
+      ORDER BY q.questionid ASC
+      `,
+      [attemptID]
+    );
+
+    res.json({
+      attempt: attemptRes.rows[0],
+      details: answersRes.rows,
+    });
   } catch (err) {
     console.error("getQuizAttemptDetail ERROR:", err);
     res.status(500).json({ error: "Errore recupero tentativo" });
