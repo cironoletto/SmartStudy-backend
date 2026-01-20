@@ -177,24 +177,16 @@ exports.evaluateOral = async (req, res) => {
       return res.status(400).json({ error: "File audio mancante" });
     }
 
-    const limitCheck = await checkLimit(userID, "oral_evaluations", 1);
-
-    if (!limitCheck.allowed) {
-      return res.status(403).json({
-        error: "LIMIT_EXCEEDED",
-        feature: "oral_evaluations",
-        reset: "domani",
-      });
-    }
-
     const q = await db.query(
-      `SELECT summary FROM study_summaries
+      `SELECT summary
+       FROM study_summaries
        WHERE sessionid=$1
        ORDER BY summaryid DESC LIMIT 1`,
       [sessionID]
     );
 
     const reference = q.rows[0]?.summary || "";
+
     const transcript = await aiService.transcribeAudio(audioFile.path);
     const rubric = await aiService.scoreOralAnswer(reference, transcript);
 
@@ -213,10 +205,7 @@ exports.evaluateOral = async (req, res) => {
       ]
     );
 
-    await incrementUsage(userID, "oral_evaluations");
-
     res.json({ rubric, transcript });
-
   } catch (err) {
     console.error("❌ evaluateOral:", err);
     res.status(500).json({ error: "Errore valutazione orale" });
@@ -224,6 +213,7 @@ exports.evaluateOral = async (req, res) => {
     try { fs.unlinkSync(req.file?.path); } catch {}
   }
 };
+
 
 /* ===========================================================
    📚 CRONOLOGIA SESSIONI
