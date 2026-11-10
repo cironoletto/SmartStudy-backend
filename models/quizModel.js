@@ -1,4 +1,6 @@
 const db = require("../db");
+const { createQuizAttemptService } = require("../services/quizAttemptService");
+const attemptService = createQuizAttemptService(db);
 
 /* -----------------------------------------------------------
    CREA QUIZ + DOMANDE (TRANSAZIONE POSTGRESQL)
@@ -127,115 +129,11 @@ exports.getQuizWithQuestions = async (quizID, userID) => {
 /* -----------------------------------------------------------
    CREATE ATTEMPT
 ------------------------------------------------------------ */
-exports.createAttempt = async (quizID, userID) => {
-  const insert = await db.query(
-    `
-    INSERT INTO attempts (quizid, userid, startedat)
-    VALUES ($1, $2, NOW())
-    RETURNING attemptid
-    `,
-    [quizID, userID]
-  );
+exports.createAttempt = (quizID, userID) =>
+  attemptService.createAttempt(quizID, userID);
 
-  return insert.rows[0].attemptid;
-};
-
-/* -----------------------------------------------------------
-   SAVE ANSWERS & SCORE (TRANSAZIONE PG)
------------------------------------------------------------- */
-exports.saveAnswersAndScore = async (quizID, attemptID, userID, answers) => {
-  const client = await db.pool.connect();
-
-  try {
-    await client.query("BEGIN");
-
-    // Fetch domande
-    const qRes = await client.query(
-      `
-      SELECT questionid, questiontype, correctanswer, points
-      FROM questions
-      WHERE quizid = $1
-      `,
-      [quizID]
-    );
-
-    const qMap = new Map();
-    qRes.rows.forEach((q) => {
-      qMap.set(q.questionid, {
-        type: q.questiontype,
-        correctAnswer: q.correctanswer,
-        points: q.points || 1,
-      });
-    });
-
-    let totalScore = 0;
-    let maxScore = 0;
-
-    // Inserisci risposte
-    for (const ans of answers) {
-      const meta = qMap.get(ans.questionID);
-      if (!meta) continue;
-
-      maxScore += meta.points;
-
-      let isCorrect = false;
-      let score = 0;
-
-      if (meta.type === "mcq") {
-        const correctIndex =
-          meta.correctAnswer != null ? parseInt(meta.correctAnswer) : null;
-
-        if (ans.selectedIndex === correctIndex) {
-          isCorrect = true;
-          score = meta.points;
-        }
-      }
-
-      await client.query(
-        `
-        INSERT INTO answers (attemptid, questionid, answertext, iscorrect, score)
-        VALUES ($1, $2, $3, $4, $5)
-        `,
-        [
-          attemptID,
-          ans.questionID,
-          ans.answerText || null,
-          isCorrect,
-          score,
-        ]
-      );
-
-      totalScore += score;
-    }
-
-    const percentage = maxScore > 0 ? totalScore / maxScore : 0;
-    const isPassed = percentage >= 0.6;
-
-    await client.query(
-      `
-      UPDATE attempts
-      SET completedat = NOW(),
-          score = $1,
-          maxscore = $2,
-          ispassed = $3
-      WHERE attemptid = $4 AND userid = $5
-      `,
-      [totalScore, maxScore, isPassed, attemptID, userID]
-    );
-
-    await client.query("COMMIT");
-
-    return { totalScore, maxScore, percentage, isPassed };
-
-  } catch (err) {
-    await client.query("ROLLBACK");
-    console.error("❌ saveAnswersAndScore ERROR:", err);
-    throw err;
-
-  } finally {
-    client.release();
-  }
-};
+exports.saveAnswersAndScore = (quizID, attemptID, userID, answers) =>
+  attemptService.saveAnswersAndScore(quizID, attemptID, userID, answers);
 
 /* -----------------------------------------------------------
    ATTEMPT DETAIL (READ ONLY)
