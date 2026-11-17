@@ -54,29 +54,31 @@ app.use((req, res, next) => {
 // ======================================================
 app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/quiz", require("./routes/quizRoutes"));
-app.use("/api/notes", require("./routes/notesRoutes"));
-app.use("/api/questions", require("./routes/questionImageRoutes"));
-app.use("/api/ocr", require("./routes/ocrRoutes"));
 app.use("/api/study", require("./routes/studyRoutes"));
+app.use("/api/limits", require("./routes/limitsRoutes"));
+app.use("/api/subscription", require("./routes/subscriptionRoutes"));
 
 // ======================================================
 // 🔍 DEBUG
 // ======================================================
+if (process.env.NODE_ENV !== "production") {
 app.get("/debug/columns/:table", async (req, res) => {
-  try {
-    const table = req.params.table;
-    const result = await pool.query(
-      `SELECT column_name 
-       FROM information_schema.columns 
-       WHERE table_name = $1`,
-      [table.toLowerCase()]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    console.error("DEBUG ERROR:", err);
-    res.status(500).json({ error: "Errore debug colonne" });
-  }
-});
+    try {
+      const table = req.params.table;
+      const result = await pool.query(
+        `SELECT column_name
+ FROM information_schema.columns
+         WHERE table_name = $1`,
+        [table.toLowerCase()]
+      );
+      res.json(result.rows);
+    } catch (err) {
+      console.error("DEBUG ERROR:", err);
+      res.status(500).json({ error: "Errore debug colonne" });
+    }
+  });
+}
+
 
 // ======================================================
 // 🔥 TEST BASE

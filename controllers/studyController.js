@@ -3,89 +3,62 @@ const db = require("../db");
 
 const ocrService = require("../services/ocrService");
 const aiService = require("../services/aiService");
-const { generateSummaryAudio } = require("../services/openaiTtsService");
+const { checkLimit, incrementUsage } = require("../services/usageLimitService");
+const { getSubscriptionStatus } = require("../services/subscriptionService");
+const { getUsagePolicy } = require("../services/usagePolicy");
 
-// 🔽 NUOVI METODI (NON rompono nulla)
-const {
-  checkLimit,
-  incrementUsage,
-} = require("../services/usageLimitService");
-
-const {
-  canGenerateTTS,
-  incrementTTS,
-} = require("../services/ttsUsageService");
-
-/* ===========================================================
-   🔎 RILEVAMENTO MATERIA
-=========================================================== */
 function detectSubjectFromText(text) {
-  const t = text.toLowerCase();
+  const t = String(text || "").toLowerCase();
 
   if (["funzione", "derivata", "asintoto", "integrale"].some(k => t.includes(k)))
     return "Matematica";
-
   if (["poesia", "autore", "testo", "analisi del testo"].some(k => t.includes(k)))
     return "Italiano";
-
   if (["rivoluzione", "storia", "secolo", "guerra"].some(k => t.includes(k)))
     return "Storia";
-
   if (["chimica", "molecola", "reazione"].some(k => t.includes(k)))
     return "Scienze";
 
   return "Studio";
 }
 
-/* ===========================================================
-   📸 OCR + STUDY
-=========================================================== */
 exports.processFromImages = async (req, res) => {
   try {
     const userID = req.user?.userId;
-    if (!userID) {
-      return res.status(401).json({ error: "Utente non autenticato" });
+    if (!userID) return res.status(401).json({ error: "Utente non autenticato" });
+
+    const mode = (req.body.mode || "summary").toLowerCase();
+    if (!["summary", "scientific", "oral"].includes(mode)) {
+      return res.status(400).json({ error: "STUDY_MODE_INVALID" });
     }
 
-    /* ---------------- MODE ---------------- */
-    const mode = (req.body.mode || "summary").toLowerCase();
+    const subscription = await getSubscriptionStatus(userID);
+    const policy = getUsagePolicy(subscription.isPro);
 
-    /* ---------------- LIMITI ---------------- */
-    const FREE_LIMITS = {
-      summary: 1,
-      scientific: 1,
-      oral: 1,
-    };
-
-    const isPro = false; // 🔜 collegare a subscription
-    const DAILY_LIMIT = isPro ? 10 : (FREE_LIMITS[mode] ?? 1);
-    const featureKey = `study_${mode}`;
-
-    // ✅ CHECK (non incrementa)
-    const limitCheck = await checkLimit(userID, featureKey, DAILY_LIMIT);
-
+    const limitCheck = await checkLimit(userID, "study_sessions", policy.studyDaily);
     if (!limitCheck.allowed) {
       return res.status(403).json({
         error: "STUDY_DAILY_LIMIT",
-        feature: mode,
-        remaining: limitCheck.remaining ?? 0,
-        limit: DAILY_LIMIT,
-        isPro,
+        feature: "study_sessions",
+        limit: policy.studyDaily,
+        remaining: 0,
+        isPro: subscription.isPro,
         reset: "domani",
       });
     }
 
-    /* ---------------- FILES ---------------- */
     const files = req.files || [];
     if (!files.length) {
       return res.status(400).json({ error: "Nessuna immagine fornita" });
     }
 
-    if (files.length > 3) {
-      return res.status(400).json({ error: "Puoi caricare massimo 3 immagini" });
+    if (files.length > policy.studyMaxImages) {
+      return res.status(400).json({
+        error: "IMAGE_LIMIT_EXCEEDED",
+        limit: policy.studyMaxImages,
+      });
     }
 
-    /* ---------------- OCR ---------------- */
     let rawText = "";
     for (const file of files) {
       try {
@@ -96,13 +69,13 @@ exports.processFromImages = async (req, res) => {
       }
     }
 
+    rawText = rawText.trim();
     if (rawText.length < 15) {
       return res.status(400).json({ error: "Testo OCR non valido" });
     }
 
     const subject = detectSubjectFromText(rawText);
 
-    /* ---------------- SESSION ---------------- */
     const qSession = await db.query(
       `INSERT INTO study_sessions (userid, subject, type, rawtext, createdat)
        VALUES ($1,$2,$3,$4,NOW())
@@ -111,84 +84,103 @@ exports.processFromImages = async (req, res) => {
     );
 
     const sessionID = qSession.rows[0].sessionid;
-
-    /* ---------------- AI ---------------- */
-   const payload = {
-  sessionID,
-  remaining: limitCheck.remaining,
-  limit: DAILY_LIMIT,
-  isPro,
-  ocrText: rawText, // 👁️ PREVIEW OCR
-};
-
+    const payload = {
+      sessionID,
+      limit: policy.studyDaily,
+      isPro: subscription.isPro,
+      ocrText: rawText,
+    };
 
     if (mode === "summary") {
       payload.summary = await aiService.generateSummary(rawText);
+      if (!payload.summary || payload.summary.startsWith("Errore")) {
+        throw new Error("SUMMARY_GENERATION_FAILED");
+      }
     }
 
     if (mode === "scientific") {
-  try {
-    const solution = await aiService.solveScientificGuided(rawText);
+      const solution = await aiService.solveScientificGuided(rawText);
+      if (!solution || !solution.finalAnswer) {
+        return res.status(400).json({
+          error: "SCIENTIFIC_NOT_SOLVABLE",
+          message: "Impossibile risolvere il problema scientifico",
+        });
+      }
 
-    if (!solution || !solution.finalAnswer) {
-      return res.status(400).json({
-        error: "SCIENTIFIC_NOT_SOLVABLE",
-        message: "Impossibile risolvere il problema scientifico",
-      });
+      payload.solutionSteps = solution.steps || [];
+      payload.finalAnswer = solution.finalAnswer;
+      payload.fallback = !!solution.fallback;
     }
-
-    payload.solutionSteps = solution.steps || [];
-    payload.finalAnswer = solution.finalAnswer;
-  } catch (e) {
-    console.error("❌ solveScientificGuided:", e);
-    return res.status(400).json({
-      error: "SCIENTIFIC_FAILED",
-      message: "Errore durante la risoluzione scientifica",
-    });
-  }
-}
-
 
     if (mode === "oral") {
-      payload.summary = await aiService.generateSummary(rawText);
+      payload.summary = await aiService.generateOralSummary(rawText);
+      if (!payload.summary || payload.summary.startsWith("Errore")) {
+        throw new Error("ORAL_SUMMARY_GENERATION_FAILED");
+      }
     }
 
-    // ✅ incrementa SOLO se tutto è andato a buon fine
-    await incrementUsage(userID, featureKey);
+    await incrementUsage(userID, "study_sessions");
+    payload.remaining = Math.max(0, Number(limitCheck.remaining || 0) - 1);
 
     return res.json(payload);
-
   } catch (err) {
-    console.error("❌ processFromImages:", err);
+    console.error("processFromImages:", err);
     return res.status(500).json({ error: "Errore elaborazione studio" });
   }
 };
 
-/* ===========================================================
-   🎙 VALUTAZIONE ORALE
-=========================================================== */
 exports.evaluateOral = async (req, res) => {
   try {
-    const userID = req.user.userId;
+    const userID = req.user?.userId;
     const audioFile = req.file;
-    const sessionID = req.body.sessionID;
+    const sessionID = Number(req.body?.sessionID);
 
-    if (!audioFile) {
-      return res.status(400).json({ error: "File audio mancante" });
+    if (!userID) return res.status(401).json({ error: "UNAUTHORIZED" });
+    if (!audioFile) return res.status(400).json({ error: "File audio mancante" });
+    if (!Number.isInteger(sessionID) || sessionID <= 0) {
+      return res.status(400).json({ error: "SESSION_INVALID" });
     }
 
-    const q = await db.query(
-      `SELECT summary
-       FROM study_summaries
-       WHERE sessionid=$1
-       ORDER BY summaryid DESC LIMIT 1`,
-      [sessionID]
+    const sessionQ = await db.query(
+      `SELECT sessionid, rawtext
+       FROM study_sessions
+       WHERE sessionid = $1 AND userid = $2 AND type = 'oral'`,
+      [sessionID, userID]
     );
 
-    const reference = q.rows[0]?.summary || "";
+    if (!sessionQ.rows.length) {
+      return res.status(404).json({ error: "SESSION_NOT_FOUND" });
+    }
 
+    const subscription = await getSubscriptionStatus(userID);
+    const policy = getUsagePolicy(subscription.isPro);
+    const limitCheck = await checkLimit(userID, "oral_evaluations", policy.oralDaily);
+
+    if (!limitCheck.allowed) {
+      return res.status(403).json({
+        error: "LIMIT_EXCEEDED",
+        feature: "oral_evaluations",
+        limit: policy.oralDaily,
+        remaining: 0,
+        isPro: subscription.isPro,
+        reset: "domani",
+      });
+    }
+
+    const reference = sessionQ.rows[0].rawtext || "";
     const transcript = await aiService.transcribeAudio(audioFile.path);
+
+    if (!transcript || transcript.trim().length < 3) {
+      return res.status(400).json({
+        error: "TRANSCRIPTION_EMPTY",
+        message: "Non sono riuscito a trascrivere la registrazione.",
+      });
+    }
+
     const rubric = await aiService.scoreOralAnswer(reference, transcript);
+    if (!rubric || typeof rubric.voto_finale !== "number") {
+      throw new Error("ORAL_RUBRIC_INVALID");
+    }
 
     await db.query(
       `INSERT INTO study_oral_evaluations
@@ -199,150 +191,203 @@ exports.evaluateOral = async (req, res) => {
         userID,
         reference,
         audioFile.path,
-        rubric.commento_prof,
+        rubric.commento_prof || "",
         rubric.voto_finale,
         transcript,
       ]
     );
 
-    res.json({ rubric, transcript });
+    await incrementUsage(userID, "oral_evaluations");
+
+    return res.json({
+      rubric,
+      transcript,
+      isPro: subscription.isPro,
+      limit: policy.oralDaily,
+      remaining: Math.max(0, Number(limitCheck.remaining || 0) - 1),
+    });
   } catch (err) {
-    console.error("❌ evaluateOral:", err);
-    res.status(500).json({ error: "Errore valutazione orale" });
+    console.error("evaluateOral:", err);
+    return res.status(500).json({ error: "Errore valutazione orale" });
   } finally {
     try { fs.unlinkSync(req.file?.path); } catch {}
   }
 };
 
-
-/* ===========================================================
-   📚 CRONOLOGIA SESSIONI
-=========================================================== */
 exports.getStudySessions = async (req, res) => {
-  const userID = req.user.userId;
-
-  const q = await db.query(
-    `SELECT sessionid AS "sessionID",
-            subject,
-            type,
-            createdat AS "createdAt",
-            rating,
-            audio_url AS "audioUrl"
-     FROM study_sessions
-     WHERE userid = $1
-     ORDER BY createdat DESC`,
-    [userID]
-  );
-
-  res.json(q.rows);
+  try {
+    const userID = req.user.userId;
+    const q = await db.query(
+      `SELECT sessionid AS "sessionID",
+              subject,
+              type,
+              createdat AS "createdAt",
+              rating,
+              audio_url AS "audioUrl"
+       FROM study_sessions
+       WHERE userid = $1
+       ORDER BY createdat DESC`,
+      [userID]
+    );
+    return res.json(q.rows);
+  } catch (err) {
+    console.error("getStudySessions:", err);
+    return res.status(500).json({ error: "STUDY_SESSIONS_ERROR" });
+  }
 };
 
 exports.getStudySession = async (req, res) => {
-  const userID = req.user.userId;
-  const { sessionID } = req.params;
-
-  const q = await db.query(
-    `SELECT *
-     FROM study_sessions
-     WHERE sessionid = $1 AND userid = $2`,
-    [sessionID, userID]
-  );
-
-  res.json(q.rows[0] || null);
+  try {
+    const userID = req.user.userId;
+    const { sessionID } = req.params;
+    const q = await db.query(
+      `SELECT * FROM study_sessions
+       WHERE sessionid = $1 AND userid = $2`,
+      [sessionID, userID]
+    );
+    return res.json(q.rows[0] || null);
+  } catch (err) {
+    console.error("getStudySession:", err);
+    return res.status(500).json({ error: "STUDY_SESSION_ERROR" });
+  }
 };
 
 exports.getOralStudyDetail = async (req, res) => {
-  const userID = req.user.userId;
-  const { sessionID } = req.params;
+  try {
+    const userID = req.user.userId;
+    const { sessionID } = req.params;
 
-  // 🔎 sessione
-  const sessionQ = await db.query(
-    `SELECT sessionid, rawtext
-     FROM study_sessions
-     WHERE sessionid = $1 AND userid = $2 AND type = 'oral'`,
-    [sessionID, userID]
-  );
+    const sessionQ = await db.query(
+      `SELECT sessionid, rawtext
+       FROM study_sessions
+       WHERE sessionid = $1 AND userid = $2 AND type = 'oral'`,
+      [sessionID, userID]
+    );
 
-  if (!sessionQ.rows.length) {
-    return res.status(404).json({ error: "Sessione non trovata" });
+    if (!sessionQ.rows.length) {
+      return res.status(404).json({ error: "Sessione non trovata" });
+    }
+
+    const evalQ = await db.query(
+      `SELECT id, score, aifeedback AS comment, createdat
+       FROM study_oral_evaluations
+       WHERE sessionid = $1 AND userid = $2
+       ORDER BY createdat DESC`,
+      [sessionID, userID]
+    );
+
+    const subscription = await getSubscriptionStatus(userID);
+    const policy = getUsagePolicy(subscription.isPro);
+    const limitCheck = await checkLimit(userID, "oral_evaluations", policy.oralDaily);
+
+    return res.json({
+      sessionID,
+      referenceText: sessionQ.rows[0].rawtext,
+      evaluations: evalQ.rows,
+      dailyLimitReached: !limitCheck.allowed,
+      remaining: limitCheck.remaining,
+      limit: policy.oralDaily,
+      isPro: subscription.isPro,
+    });
+  } catch (err) {
+    console.error("getOralStudyDetail:", err);
+    return res.status(500).json({ error: "ORAL_DETAIL_ERROR" });
   }
-
-  // 📊 valutazioni
-  const evalQ = await db.query(
-    `SELECT 
-       id,
-       score,
-       aifeedback AS comment,
-       createdat
-     FROM study_oral_evaluations
-     WHERE sessionid = $1
-     ORDER BY createdat DESC`,
-    [sessionID]
-  );
-
-  // 🔐 LIMITE GIORNALIERO (COME STUDY)
-  const DAILY_LIMIT = 1; // FREE
-  const isPro = false;   // 🔜 collegare subscription
-
-  const limitCheck = await checkLimit(
-    userID,
-    "oral_evaluations",
-    DAILY_LIMIT
-  );
-
-  res.json({
-    sessionID,
-    summary: sessionQ.rows[0].rawtext,
-    evaluations: evalQ.rows,
-
-    // ➕ NUOVI CAMPI (frontend-ready)
-    dailyLimitReached: !limitCheck.allowed,
-    remaining: limitCheck.remaining,
-    limit: DAILY_LIMIT,
-    isPro,
-  });
 };
 
-/* ===========================================================
-   ⭐ RATING
-=========================================================== */
 exports.setRating = async (req, res) => {
-  const userID = req.user.userId;
-  const { sessionID } = req.params;
-  const { rating } = req.body;
+  try {
+    const userID = req.user.userId;
+    const { sessionID } = req.params;
+    const rating = Number(req.body?.rating);
 
-  await db.query(
-    `UPDATE study_sessions
-     SET rating = $1
-     WHERE sessionid = $2 AND userid = $3`,
-    [rating, sessionID, userID]
-  );
+    if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+      return res.status(400).json({ error: "RATING_INVALID" });
+    }
 
-  res.json({ ok: true });
+    await db.query(
+      `UPDATE study_sessions
+       SET rating = $1
+       WHERE sessionid = $2 AND userid = $3`,
+      [rating, sessionID, userID]
+    );
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("setRating:", err);
+    return res.status(500).json({ error: "RATING_ERROR" });
+  }
 };
 
-/* ===========================================================
-   📊 STATISTICHE
-=========================================================== */
 exports.getStudyStats = async (req, res) => {
-  const userID = req.user.userId;
+  try {
+    const userID = req.user.userId;
 
-  const q = await db.query(
-    `SELECT COUNT(*)::int AS total,
-            AVG(rating)::float AS avg_rating
-     FROM study_sessions
-     WHERE userid = $1`,
-    [userID]
-  );
+    const totalsQ = await db.query(
+      `SELECT
+         COUNT(*)::int AS total_sessions,
+         COUNT(*) FILTER (WHERE type = 'summary')::int AS total_summaries,
+         COUNT(*) FILTER (WHERE type = 'scientific')::int AS total_scientific,
+         COUNT(*) FILTER (WHERE type = 'oral')::int AS total_oral,
+         AVG(rating)::float AS avg_rating
+       FROM study_sessions
+       WHERE userid = $1`,
+      [userID]
+    );
 
-  res.json(q.rows[0]);
+    const oralQ = await db.query(
+      `SELECT COUNT(*)::int AS total_oral_evaluations,
+              AVG(score)::float AS avg_oral_score
+       FROM study_oral_evaluations
+       WHERE userid = $1`,
+      [userID]
+    );
+
+    const byDayQ = await db.query(
+      `WITH days AS (
+         SELECT generate_series(
+           CURRENT_DATE - INTERVAL '6 days',
+           CURRENT_DATE,
+           INTERVAL '1 day'
+         )::date AS day
+       )
+       SELECT TO_CHAR(days.day, 'DD/MM') AS label,
+              COUNT(s.sessionid)::int AS sessions
+       FROM days
+       LEFT JOIN study_sessions s
+         ON s.userid = $1 AND s.createdat::date = days.day
+       GROUP BY days.day
+       ORDER BY days.day`,
+      [userID]
+    );
+
+    const totals = totalsQ.rows[0] || {};
+    const oral = oralQ.rows[0] || {};
+
+    return res.json({
+      totalSessions: totals.total_sessions || 0,
+      totalSummaries: totals.total_summaries || 0,
+      totalScientific: totals.total_scientific || 0,
+      totalOral: totals.total_oral || 0,
+      totalOralEvaluations: oral.total_oral_evaluations || 0,
+      avgOralScore: oral.avg_oral_score || 0,
+      avgRating: totals.avg_rating || 0,
+      byDay: byDayQ.rows,
+    });
+  } catch (err) {
+    console.error("getStudyStats:", err);
+    return res.status(500).json({ error: "STUDY_STATS_ERROR" });
+  }
 };
 
 exports.getGlobalStats = async (_req, res) => {
-  const q = await db.query(
-    `SELECT COUNT(*)::int AS total_sessions
-     FROM study_sessions`
-  );
-
-  res.json(q.rows[0]);
+  try {
+    const q = await db.query(
+      `SELECT COUNT(*)::int AS total_sessions FROM study_sessions`
+    );
+    return res.json(q.rows[0]);
+  } catch (err) {
+    console.error("getGlobalStats:", err);
+    return res.status(500).json({ error: "GLOBAL_STATS_ERROR" });
+  }
 };

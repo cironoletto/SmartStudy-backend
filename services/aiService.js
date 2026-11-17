@@ -3,6 +3,8 @@ const OpenAI = require("openai");
 const fs = require("fs");
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || "gpt-6-luna";
+const TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-transcribe";
 
 /* =========================================================
    🔒 FILTRO AUTOMATICO ANTI-ERRORI (CENTRALE)
@@ -49,7 +51,8 @@ Riassumi in modo chiaro, coerente e con stile scolastico:
 ${text}
 `;
     const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: TEXT_MODEL,
+      reasoning_effort: "none",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.3,
     });
@@ -73,7 +76,8 @@ Testo:
 ${text}
 `;
     const r = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: TEXT_MODEL,
+      reasoning_effort: "none",
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -107,7 +111,8 @@ Testo:
 ${text}
 `;
     const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: TEXT_MODEL,
+      reasoning_effort: "none",
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" }
     });
@@ -124,7 +129,7 @@ ${text}
 exports.transcribeAudio = async (audioPath) => {
   try {
     const response = await client.audio.transcriptions.create({
-      model: "gpt-4o-transcribe",
+      model: TRANSCRIBE_MODEL,
       file: fs.createReadStream(audioPath),
       response_format: "json"
     });
@@ -165,7 +170,8 @@ Errori comuni da evitare
 `;
 
   const res = await client.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: TEXT_MODEL,
+      reasoning_effort: "none",
     messages: [
       { role: "system", content: "Sei un professore di matematica molto rigoroso." },
       { role: "user", content: text },
@@ -211,7 +217,8 @@ PASSO 5 – Risultato finale
 
   try {
     const res = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: TEXT_MODEL,
+      reasoning_effort: "none",
       messages: [
         { role: "system", content: "Sei un professore di matematica." },
         { role: "user", content: text },
@@ -288,7 +295,8 @@ Rispondi SOLO in JSON nel formato:
 `;
 
   const res = await client.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: TEXT_MODEL,
+      reasoning_effort: "none",
     messages: [{ role: "user", content: prompt }],
     temperature: 0.2,
     response_format: { type: "json_object" }

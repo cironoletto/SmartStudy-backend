@@ -47,6 +47,7 @@ router.post(
 ----------------------------------------- */
 router.get("/sessions", authMiddleware, studyController.getStudySessions);
 router.get("/session/:sessionID", authMiddleware, studyController.getStudySession);
+router.get("/oral/:sessionID", authMiddleware, studyController.getOralStudyDetail);
 
 /* -----------------------------------------
    ⭐ Rating Sessione
