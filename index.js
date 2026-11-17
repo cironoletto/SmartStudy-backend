@@ -88,8 +88,58 @@ app.get("/", (req, res) =>
 );
 
 // ======================================================
-// 🚀 AVVIO SERVER (CORRETTO PER RAILWAY)
+// DATABASE - PASSWORD RESET SCHEMA
 // ======================================================
-app.listen(PORT, () => {
-  console.log(`🚀 Server avviato correttamente sulla porta ${PORT}`);
-});
+
+async function ensurePasswordResetSchema() {
+  console.log("Verifica schema recupero password...");
+
+  await pool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS email VARCHAR(320)
+  `);
+
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_users_email_lower
+    ON users (LOWER(email))
+    WHERE email IS NOT NULL
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS password_reset_codes (
+      resetid BIGSERIAL PRIMARY KEY,
+      userid BIGINT NOT NULL REFERENCES users(userid) ON DELETE CASCADE,
+      codehash VARCHAR(64) NOT NULL,
+      expiresat TIMESTAMPTZ NOT NULL,
+      attemptcount INTEGER NOT NULL DEFAULT 0,
+      usedat TIMESTAMPTZ NULL,
+      createdat TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS ix_password_reset_codes_user_active
+    ON password_reset_codes (userid, createdat DESC)
+  `);
+
+  console.log("Schema recupero password pronto");
+}
+
+// ======================================================
+// AVVIO SERVER
+// ======================================================
+
+async function startServer() {
+  try {
+    await ensurePasswordResetSchema();
+
+    app.listen(PORT, () => {
+      console.log(`Server avviato correttamente sulla porta ${PORT}`);
+    });
+  } catch (err) {
+    console.error("Errore inizializzazione database:", err);
+    process.exit(1);
+  }
+}
+
+startServer();
