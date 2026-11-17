@@ -1,58 +1,90 @@
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 
 function isConfigured() {
   return !!(
-    process.env.SMTP_HOST &&
-    process.env.SMTP_PORT &&
-    process.env.SMTP_USER &&
-    process.env.SMTP_PASS &&
-    process.env.SMTP_FROM
+    process.env.RESEND_API_KEY &&
+    process.env.RESEND_FROM
   );
 }
 
-function createTransporter() {
+function getClient() {
   if (!isConfigured()) {
-    throw new Error("SMTP_NOT_CONFIGURED");
+    throw new Error("RESEND_NOT_CONFIGURED");
   }
 
-  const port = Number(process.env.SMTP_PORT);
-  const secure =
-    String(process.env.SMTP_SECURE || "").toLowerCase() === "true" ||
-    port === 465;
-
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port,
-    secure,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  });
+  return new Resend(process.env.RESEND_API_KEY);
 }
 
-async function sendPasswordResetCode({ to, fullName, code, expiresMinutes }) {
-  const transporter = createTransporter();
-  const safeName = fullName || "Studente";
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
 
-  await transporter.sendMail({
-    from: process.env.SMTP_FROM,
-    to,
+async function sendPasswordResetCode({
+  to,
+  fullName,
+  code,
+  expiresMinutes,
+}) {
+  const resend = getClient();
+
+  const safeName =
+    String(fullName || "Studente").trim() || "Studente";
+
+  const safeNameHtml = escapeHtml(safeName);
+  const safeCodeHtml = escapeHtml(code);
+
+  const { data, error } = await resend.emails.send({
+    from: process.env.RESEND_FROM,
+    to: [to],
     subject: "SmartStudy - Codice recupero password",
+
     text:
       `Ciao ${safeName},\n\n` +
       `il tuo codice SmartStudy per reimpostare la password è: ${code}\n\n` +
       `Il codice scade tra ${expiresMinutes} minuti.\n` +
       `Se non hai richiesto il recupero password, ignora questa email.\n\n` +
       `SmartStudy`,
+
     html:
-      `<p>Ciao ${safeName},</p>` +
-      `<p>il tuo codice SmartStudy per reimpostare la password è:</p>` +
-      `<p style="font-size:28px;font-weight:700;letter-spacing:6px">${code}</p>` +
+      `<div style="font-family:Arial,sans-serif;max-width:520px;margin:auto">` +
+      `<h2 style="color:#0B2239">SmartStudy</h2>` +
+      `<p>Ciao ${safeNameHtml},</p>` +
+      `<p>hai richiesto di reimpostare la password del tuo account.</p>` +
+      `<p>Il tuo codice di verifica è:</p>` +
+      `<div style="font-size:32px;font-weight:700;letter-spacing:8px;color:#0B2239;margin:24px 0">` +
+      `${safeCodeHtml}` +
+      `</div>` +
       `<p>Il codice scade tra <strong>${expiresMinutes} minuti</strong>.</p>` +
-      `<p>Se non hai richiesto il recupero password, ignora questa email.</p>` +
-      `<p>SmartStudy</p>`,
+      `<p>Se non hai richiesto il recupero password, puoi ignorare questa email.</p>` +
+      `<p style="margin-top:30px;color:#718096">SmartStudy</p>` +
+      `</div>`,
   });
+
+  if (error) {
+    console.error("RESEND EMAIL ERROR:", {
+      name: error.name,
+      message: error.message,
+    });
+
+    const err = new Error(
+      error.message || "RESEND_SEND_FAILED"
+    );
+
+    err.code = "RESEND_SEND_FAILED";
+    throw err;
+  }
+
+  console.log(
+    "Password reset email inviata tramite Resend:",
+    data?.id || "OK"
+  );
+
+  return data;
 }
 
 module.exports = {
