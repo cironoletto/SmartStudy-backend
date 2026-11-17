@@ -46,7 +46,7 @@ async function register(req, res) {
     if (existing) {
       return res.status(409).json({
         error: "USERNAME_EXISTS",
-        message: "Questo username e gia registrato. Scegline un altro.",
+        message: "Questo username è già registrato. Scegline un altro.",
       });
     }
 
