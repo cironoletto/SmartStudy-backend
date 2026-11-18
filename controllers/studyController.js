@@ -112,14 +112,26 @@ exports.processFromImages = async (req, res) => {
       payload.fallback = !!solution.fallback;
     }
 
-    if (mode === "oral") {
-      payload.summary = await aiService.generateOralSummary(rawText);
-      if (!payload.summary || payload.summary.startsWith("Errore")) {
-        throw new Error("ORAL_SUMMARY_GENERATION_FAILED");
-      }
-    }
+   if (mode === "oral") {
+  payload.summary = await aiService.generateOralSummary(rawText);
+  if (!payload.summary || payload.summary.startsWith("Errore")) {
+    throw new Error("ORAL_SUMMARY_GENERATION_FAILED");
+  }
+}
 
-    await incrementUsage(userID, "study_sessions");
+/* -------------------------------------------------
+   SALVATAGGIO RIASSUNTO
+------------------------------------------------- */
+if (payload.summary) {
+  await db.query(
+    `INSERT INTO study_summaries
+       (sessionid, summary)
+     VALUES ($1, $2)`,
+    [sessionID, payload.summary]
+  );
+}
+
+await incrementUsage(userID, "study_sessions");
     payload.remaining = Math.max(0, Number(limitCheck.remaining || 0) - 1);
 
     return res.json(payload);
@@ -214,29 +226,44 @@ exports.evaluateOral = async (req, res) => {
   }
 };
 
-exports.getStudySessions = async (req, res) => {
+exports.getStudySession = async (req, res) => {
   try {
     const userID = req.user.userId;
+    const { sessionID } = req.params;
 
     const q = await db.query(
       `SELECT
-         sessionid AS "sessionID",
-         subject,
-         type,
-         createdat AS "createdAt",
-         rating,
-         NULL::text AS "audioUrl"
-       FROM study_sessions
-       WHERE userid = $1
-       ORDER BY createdat DESC`,
-      [userID]
+         s.sessionid AS "sessionID",
+         s.subject,
+         s.type,
+         s.rawtext AS "rawText",
+         s.createdat AS "createdAt",
+         s.rating,
+         ss.summary,
+         ss.audiourl AS "audioUrl"
+       FROM study_sessions s
+
+       LEFT JOIN LATERAL (
+         SELECT
+           summary,
+           audiourl
+         FROM study_summaries
+         WHERE sessionid = s.sessionid
+         ORDER BY summaryid DESC
+         LIMIT 1
+       ) ss ON TRUE
+
+       WHERE s.sessionid = $1
+         AND s.userid = $2`,
+      [sessionID, userID]
     );
 
-    return res.json(q.rows);
+    return res.json(q.rows[0] || null);
   } catch (err) {
-    console.error("getStudySessions:", err);
+    console.error("getStudySession:", err);
+
     return res.status(500).json({
-      error: "STUDY_SESSIONS_ERROR",
+      error: "STUDY_SESSION_ERROR",
       message: err.message,
     });
   }
@@ -246,15 +273,28 @@ exports.getStudySession = async (req, res) => {
   try {
     const userID = req.user.userId;
     const { sessionID } = req.params;
+
     const q = await db.query(
-      `SELECT * FROM study_sessions
-       WHERE sessionid = $1 AND userid = $2`,
+      `SELECT
+         sessionid AS "sessionID",
+         subject,
+         type,
+         rawtext AS "rawText",
+         createdat AS "createdAt",
+         rating
+       FROM study_sessions
+       WHERE sessionid = $1
+         AND userid = $2`,
       [sessionID, userID]
     );
+
     return res.json(q.rows[0] || null);
   } catch (err) {
     console.error("getStudySession:", err);
-    return res.status(500).json({ error: "STUDY_SESSION_ERROR" });
+    return res.status(500).json({
+      error: "STUDY_SESSION_ERROR",
+      message: err.message,
+    });
   }
 };
 
