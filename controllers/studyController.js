@@ -226,6 +226,36 @@ exports.evaluateOral = async (req, res) => {
   }
 };
 
+exports.getStudySessions = async (req, res) => {
+  try {
+    const userID = req.user.userId;
+
+    const q = await db.query(
+      `SELECT
+         sessionid AS "sessionID",
+         subject,
+         type,
+         createdat AS "createdAt",
+         rating,
+         NULL::text AS "audioUrl"
+       FROM study_sessions
+       WHERE userid = $1
+       ORDER BY createdat DESC`,
+      [userID]
+    );
+
+    return res.json(q.rows);
+  } catch (err) {
+    console.error("getStudySessions:", err);
+
+    return res.status(500).json({
+      error: "STUDY_SESSIONS_ERROR",
+      message: err.message,
+    });
+  }
+};
+
+
 exports.getStudySession = async (req, res) => {
   try {
     const userID = req.user.userId;
@@ -262,35 +292,6 @@ exports.getStudySession = async (req, res) => {
   } catch (err) {
     console.error("getStudySession:", err);
 
-    return res.status(500).json({
-      error: "STUDY_SESSION_ERROR",
-      message: err.message,
-    });
-  }
-};
-
-exports.getStudySession = async (req, res) => {
-  try {
-    const userID = req.user.userId;
-    const { sessionID } = req.params;
-
-    const q = await db.query(
-      `SELECT
-         sessionid AS "sessionID",
-         subject,
-         type,
-         rawtext AS "rawText",
-         createdat AS "createdAt",
-         rating
-       FROM study_sessions
-       WHERE sessionid = $1
-         AND userid = $2`,
-      [sessionID, userID]
-    );
-
-    return res.json(q.rows[0] || null);
-  } catch (err) {
-    console.error("getStudySession:", err);
     return res.status(500).json({
       error: "STUDY_SESSION_ERROR",
       message: err.message,
