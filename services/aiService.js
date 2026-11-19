@@ -46,19 +46,106 @@ function looksLikeCalculation(text) {
 exports.generateSummary = async (text) => {
   try {
     const prompt = `
-Riassumi in modo chiaro, coerente e con stile scolastico:
+Devi trasformare il testo seguente in un RIASSUNTO DI STUDIO
+completo, chiaro e realmente utile per prepararsi a una verifica
+o a un'interrogazione.
+
+IMPORTANTE:
+Non creare un riassunto troppo breve o telegrafico.
+L'obiettivo non è ridurre il testo al minimo, ma renderlo più
+semplice da studiare mantenendo tutte le informazioni importanti.
+
+REGOLE:
+
+1. Mantieni TUTTI i concetti fondamentali presenti nel testo.
+
+2. Non eliminare:
+   - definizioni;
+   - nomi importanti;
+   - date;
+   - eventi;
+   - formule;
+   - classificazioni;
+   - cause e conseguenze;
+   - caratteristiche;
+   - esempi utili;
+   - passaggi logici importanti.
+
+3. Spiega i concetti con frasi complete e comprensibili.
+   Non limitarti a un elenco di parole chiave.
+
+4. Se il testo originale è lungo, anche il riassunto deve essere
+   sufficientemente approfondito.
+   La lunghezza deve essere proporzionata alla quantità e alla
+   complessità del materiale originale.
+
+5. Organizza il contenuto in sezioni con titoli chiari quando
+   nel testo sono presenti più argomenti.
+
+6. Usa paragrafi brevi e leggibili.
+
+7. Quando due concetti sono collegati, spiega il collegamento
+   invece di presentarli come informazioni isolate.
+
+8. Se sono presenti sequenze, fasi, procedimenti o classificazioni,
+   mantienili nell'ordine corretto.
+
+9. Non aggiungere informazioni che non siano presenti nel testo.
+   Non inventare date, esempi, spiegazioni o fatti.
+
+10. Correggi soltanto evidenti errori di lettura OCR quando il
+    significato corretto è inequivocabile. Se il significato non
+    è chiaro, non inventarlo.
+
+11. Evita introduzioni inutili come:
+    "Ecco il riassunto del testo".
+
+12. Alla fine aggiungi una sezione:
+
+CONCETTI DA RICORDARE
+
+con 5-10 punti essenziali, oppure un numero maggiore se il
+materiale è particolarmente ricco.
+
+STILE:
+- scolastico;
+- chiaro;
+- discorsivo;
+- approfondito ma non ripetitivo;
+- adatto a uno studente che deve imparare l'argomento;
+- linguaggio semplice senza impoverire i contenuti.
+
+TESTO DA RIASSUMERE:
 
 ${text}
 `;
-    const response = await client.chat.completions.create({
-      model: TEXT_MODEL,
-      reasoning_effort: "none",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.3,
-    });
+
+    const response =
+      await client.chat.completions.create({
+        model: TEXT_MODEL,
+        reasoning_effort: "none",
+        messages: [
+          {
+            role: "system",
+            content:
+              "Sei un tutor scolastico esperto. Produci riassunti completi e didattici che semplificano il materiale senza perdere le informazioni importanti.",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        temperature: 0.25,
+      });
 
     return response.choices[0].message.content.trim();
-  } catch {
+
+  } catch (err) {
+    console.error(
+      "SUMMARY GENERATION ERROR:",
+      err
+    );
+
     return "Errore nella generazione del riassunto.";
   }
 };
