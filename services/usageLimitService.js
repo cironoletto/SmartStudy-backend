@@ -50,10 +50,14 @@ async function checkLimit(userID, feature, limit) {
  * ✅ INCREMENTO REALE
  * Usato SOLO dopo successo (AI / OCR completato)
  */
-async function incrementUsage(userID, feature) {
+async function incrementUsage(
+  userID,
+  feature,
+  executor = db
+) {
   const now = new Date();
 
-  const q = await db.query(
+  const q = await executor.query(
     `SELECT count, reset_at
      FROM usage_limits
      WHERE userid = $1 AND feature = $2`,
@@ -66,7 +70,7 @@ async function incrementUsage(userID, feature) {
     tomorrow.setDate(tomorrow.getDate() + 1);
     tomorrow.setHours(0, 0, 0, 0);
 
-    await db.query(
+    await executor.query(
       `INSERT INTO usage_limits (userid, feature, count, reset_at)
        VALUES ($1, $2, 1, $3)`,
       [userID, feature, tomorrow]
@@ -83,7 +87,7 @@ async function incrementUsage(userID, feature) {
     tomorrow.setDate(tomorrow.getDate() + 1);
     tomorrow.setHours(0, 0, 0, 0);
 
-    await db.query(
+    await executor.query(
       `UPDATE usage_limits
        SET count = 1, reset_at = $3
        WHERE userid = $1 AND feature = $2`,
@@ -93,7 +97,7 @@ async function incrementUsage(userID, feature) {
   }
 
   // Incremento normale
-  await db.query(
+  await executor.query(
     `UPDATE usage_limits
      SET count = count + 1
      WHERE userid = $1 AND feature = $2`,

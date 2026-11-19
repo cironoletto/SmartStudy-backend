@@ -3,7 +3,9 @@ const fs = require("fs");
 const OpenAI = require("openai");
 const { extractTextFromImages } = require("./localOCR");
 const quizModel = require("../models/quizModel");
-const { checkLimit, incrementUsage } = require("../services/usageLimitService");
+const {
+  checkLimit,
+} = require("../services/usageLimitService");
 const { getSubscriptionStatus } = require("../services/subscriptionService");
 const { getUsagePolicy } = require("../services/usagePolicy");
 
@@ -109,13 +111,90 @@ exports.generateQuizFromImages = async (req, res) => {
     const userID = req.user?.userId;
     if (!userID) return res.status(401).json({ error: "Utente non autenticato" });
 
-    const files = req.files || [];
-    if (!files.length) {
-      return res.status(400).json({ error: "Nessuna immagine ricevuta" });
+  const files = req.files || [];
+
+const requestID = String(
+  req.body?.requestID || ""
+)
+  .trim()
+  .slice(0, 100);
+
+const subscription =
+  await getSubscriptionStatus(
+    userID
+  );
+
+const policy =
+  getUsagePolicy(
+    subscription.isPro
+  );
+
+/* ---------------------------------------------------------
+   RETRY IDEMPOTENTE
+   Se il quiz esiste già, non rifare OCR/OpenAI
+--------------------------------------------------------- */
+if (requestID) {
+  const existingQuiz =
+    await quizModel.getQuizByRequestID(
+      userID,
+      requestID
+    );
+
+  if (existingQuiz) {
+    // Le immagini sono già state caricate da multer:
+    // eliminiamo i file temporanei.
+    for (const file of files) {
+      try {
+        fs.unlinkSync(file.path);
+      } catch {}
     }
 
-    const subscription = await getSubscriptionStatus(userID);
-    const policy = getUsagePolicy(subscription.isPro);
+    const currentLimit =
+      await checkLimit(
+        userID,
+        "quiz_sessions",
+        policy.quizDaily
+      );
+
+    return res.json({
+      quizID:
+        existingQuiz.quizID,
+
+      title:
+        existingQuiz.title,
+
+      description:
+        existingQuiz.description,
+
+      questions:
+        existingQuiz.questions,
+
+      isPro:
+        subscription.isPro,
+
+      limit:
+        policy.quizDaily,
+
+      remaining:
+        Math.max(
+          0,
+          Number(
+            currentLimit.remaining ||
+              0
+          )
+        ),
+
+      reused: true,
+    });
+  }
+}
+
+if (!files.length) {
+  return res.status(400).json({
+    error:
+      "Nessuna immagine ricevuta",
+  });
+}
 
     if (files.length > policy.quizMaxImages) {
       return res.status(400).json({
@@ -172,24 +251,55 @@ exports.generateQuizFromImages = async (req, res) => {
     const quizJson = JSON.parse(completion.choices[0].message.content);
     const normalized = normalizeQuizJson(quizJson);
 
-    const quizID = await quizModel.createQuizWithQuestions({
-      userID,
-      title: normalized.title,
-      description: normalized.description,
-      questions: normalized.questions,
-    });
+    const quizID =
+  await quizModel.createQuizWithQuestions({
+    userID,
+    title: normalized.title,
+    description:
+      normalized.description,
+    questions:
+      normalized.questions,
+    requestID:
+      requestID || null,
+  });
 
-    await incrementUsage(userID, "quiz_sessions");
+  const savedQuiz =
+  requestID
+    ? await quizModel.getQuizByRequestID(
+        userID,
+        requestID
+      )
+    : null;
 
-    return res.json({
-      quizID,
-      title: normalized.title,
-      description: normalized.description,
-      questions: normalized.questions,
-      isPro: subscription.isPro,
-      limit: policy.quizDaily,
-      remaining: Math.max(0, Number(limitCheck.remaining || 0) - 1),
-    });
+return res.json({
+  quizID,
+
+  title:
+    savedQuiz?.title ??
+    normalized.title,
+
+  description:
+    savedQuiz?.description ??
+    normalized.description,
+
+  questions:
+    savedQuiz?.questions ??
+    normalized.questions,
+
+  isPro:
+    subscription.isPro,
+
+  limit:
+    policy.quizDaily,
+
+  remaining:
+    Math.max(
+      0,
+      Number(
+        limitCheck.remaining || 0
+      ) - 1
+    ),
+});
   } catch (err) {
     console.error("OCR QUIZ ERROR:", err);
     return res.status(500).json({ error: "Errore durante la generazione del quiz" });

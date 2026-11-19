@@ -1,4 +1,7 @@
 const db = require("../db");
+const {
+  incrementUsage,
+} = require("../services/usageLimitService");
 const { createQuizAttemptService } = require("../services/quizAttemptService");
 const attemptService = createQuizAttemptService(db);
 
@@ -12,16 +15,60 @@ exports.createQuizWithQuestions = async (quizData) => {
     await client.query("BEGIN");
 
     // 1️⃣ Inserisci quiz
-    const quizInsert = await client.query(
+const quizInsert = await client.query(
+  `
+  INSERT INTO quizzes
+    (userid, title, description, createdat, requestid)
+  VALUES
+    ($1, $2, $3, NOW(), $4)
+
+  ON CONFLICT (userid, requestid)
+  WHERE requestid IS NOT NULL
+  DO NOTHING
+
+  RETURNING quizid
+  `,
+  [
+    quizData.userID,
+    quizData.title,
+    quizData.description,
+    quizData.requestID || null,
+  ]
+);
+
+let quizID;
+
+if (quizInsert.rows.length > 0) {
+  quizID = quizInsert.rows[0].quizid;
+} else {
+  const existingQuiz =
+    await client.query(
       `
-      INSERT INTO quizzes (userid, title, description, createdat)
-      VALUES ($1, $2, $3, NOW())
-      RETURNING quizid
+      SELECT quizid
+      FROM quizzes
+      WHERE userid = $1
+        AND requestid = $2
+      LIMIT 1
       `,
-      [quizData.userID, quizData.title, quizData.description]
+      [
+        quizData.userID,
+        quizData.requestID,
+      ]
     );
 
-    const quizID = quizInsert.rows[0].quizid;
+  if (!existingQuiz.rows.length) {
+    throw new Error(
+      "QUIZ_IDEMPOTENCY_LOOKUP_FAILED"
+    );
+  }
+
+ quizID =
+  existingQuiz.rows[0].quizid;
+
+await client.query("COMMIT");
+return quizID;
+}
+
 
     // 2️⃣ Inserisci domande
     for (const q of quizData.questions) {
@@ -58,8 +105,14 @@ exports.createQuizWithQuestions = async (quizData) => {
       );
     }
 
-    await client.query("COMMIT");
-    return quizID;
+await incrementUsage(
+  quizData.userID,
+  "quiz_sessions",
+  client
+);
+
+await client.query("COMMIT");
+return quizID;
 
   } catch (err) {
     await client.query("ROLLBACK");
@@ -69,6 +122,122 @@ exports.createQuizWithQuestions = async (quizData) => {
     client.release();
   }
 };
+
+/* -----------------------------------------------------------
+   QUIZ BY REQUEST ID
+   Usato per retry idempotente
+------------------------------------------------------------ */
+exports.getQuizByRequestID = async (
+  userID,
+  requestID
+) => {
+  if (!requestID) {
+    return null;
+  }
+
+  const quizQ = await db.query(
+    `
+    SELECT
+      quizid,
+      title,
+      description,
+      createdat
+    FROM quizzes
+    WHERE userid = $1
+      AND requestid = $2
+    LIMIT 1
+    `,
+    [
+      userID,
+      requestID,
+    ]
+  );
+
+  if (!quizQ.rows.length) {
+    return null;
+  }
+
+  const quiz = quizQ.rows[0];
+
+  const questionsQ =
+    await db.query(
+      `
+      SELECT
+        questionid,
+        questiontext,
+        questiontype,
+        choicesjson,
+        correctanswer,
+        points
+      FROM questions
+      WHERE quizid = $1
+      ORDER BY questionid
+      `,
+      [quiz.quizid]
+    );
+
+  const questions =
+    questionsQ.rows.map(
+      (q) => {
+        if (
+          q.questiontype ===
+          "mcq"
+        ) {
+          const parsedIndex =
+            Number(
+              q.correctanswer
+            );
+
+          return {
+            questionID:
+              q.questionid,
+            type: "mcq",
+            text:
+              q.questiontext,
+            choices:
+              q.choicesjson
+                ? JSON.parse(
+                    q.choicesjson
+                  )
+                : [],
+            correctIndex:
+              Number.isFinite(
+                parsedIndex
+              )
+                ? parsedIndex
+                : 0,
+            points:
+              q.points,
+          };
+        }
+
+        return {
+          questionID:
+            q.questionid,
+          type: "open",
+          text:
+            q.questiontext,
+          idealAnswer:
+            q.correctanswer || "",
+          points:
+            q.points,
+        };
+      }
+    );
+
+  return {
+    quizID:
+      quiz.quizid,
+    title:
+      quiz.title,
+    description:
+      quiz.description,
+    questions,
+    createdAt:
+      quiz.createdat,
+  };
+};
+
 
 /* -----------------------------------------------------------
    QUIZ BY USER
