@@ -27,7 +27,7 @@ const upload = multer({
 
   // 🔒 LIMITE DIMENSIONE (CRUCIALE PER RAILWAY)
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5 MB per immagine
+    fileSize: 12 * 1024 * 1024, // 12 MB per immagine
     files: 5, // max 5 immagini
   },
 
