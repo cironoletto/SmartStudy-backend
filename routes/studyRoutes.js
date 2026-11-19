@@ -33,6 +33,15 @@ router.post(
 );
 
 /* -----------------------------------------
+   🧠 Spiegazione singolo passaggio scientifico
+----------------------------------------- */
+router.post(
+  "/scientific/explain-step",
+  authMiddleware,
+  studyController.explainScientificStep
+);
+
+/* -----------------------------------------
    🎙 VALUTAZIONE ORALE
 ----------------------------------------- */
 router.post(

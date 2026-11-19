@@ -141,6 +141,132 @@ await incrementUsage(userID, "study_sessions");
   }
 };
 
+
+exports.explainScientificStep = async (req, res) => {
+  try {
+    const userID = req.user?.userId;
+
+    if (!userID) {
+      return res.status(401).json({
+        error: "UNAUTHORIZED",
+      });
+    }
+
+    const sessionID =
+      Number(req.body?.sessionID);
+
+    const stepNumber =
+      Number(req.body?.stepNumber);
+
+    const step =
+      String(req.body?.step || "")
+        .trim();
+
+    if (
+      !Number.isInteger(sessionID) ||
+      sessionID <= 0
+    ) {
+      return res.status(400).json({
+        error: "SESSION_INVALID",
+      });
+    }
+
+    if (
+      !Number.isInteger(stepNumber) ||
+      stepNumber <= 0 ||
+      stepNumber > 100
+    ) {
+      return res.status(400).json({
+        error: "STEP_NUMBER_INVALID",
+      });
+    }
+
+    if (
+      !step ||
+      step.length > 2000
+    ) {
+      return res.status(400).json({
+        error: "STEP_INVALID",
+      });
+    }
+
+    /*
+     * Recuperiamo l'esercizio originale
+     * direttamente dal DB.
+     * Inoltre verifichiamo che appartenga
+     * realmente all'utente.
+     */
+    const sessionQ =
+      await db.query(
+        `
+        SELECT
+          sessionid,
+          rawtext
+        FROM study_sessions
+        WHERE sessionid = $1
+          AND userid = $2
+          AND type = 'scientific'
+        LIMIT 1
+        `,
+        [
+          sessionID,
+          userID,
+        ]
+      );
+
+    if (!sessionQ.rows.length) {
+      return res.status(404).json({
+        error:
+          "SCIENTIFIC_SESSION_NOT_FOUND",
+      });
+    }
+
+    const exerciseText =
+      sessionQ.rows[0].rawtext || "";
+
+    const explanation =
+      await aiService.explainScientificStep(
+        exerciseText,
+        step,
+        stepNumber
+      );
+
+    if (
+      !explanation ||
+      !explanation.explanation
+    ) {
+      throw new Error(
+        "STEP_EXPLANATION_FAILED"
+      );
+    }
+
+    return res.json({
+      sessionID,
+      stepNumber,
+
+      explanation:
+        explanation.explanation,
+
+      why:
+        explanation.why || "",
+
+      rule:
+        explanation.rule || "",
+    });
+
+  } catch (err) {
+    console.error(
+      "explainScientificStep:",
+      err
+    );
+
+    return res.status(500).json({
+      error:
+        "SCIENTIFIC_STEP_EXPLANATION_ERROR",
+    });
+  }
+};
+
 exports.evaluateOral = async (req, res) => {
   try {
     const userID = req.user?.userId;
