@@ -14,6 +14,7 @@ const db = require("../db");
 const emailService = require("../services/emailService");
 
 const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
 const RESET_EXPIRES_MINUTES = Number(process.env.PASSWORD_RESET_EXPIRES_MINUTES || 15);
 const RESET_MAX_ATTEMPTS = Number(process.env.PASSWORD_RESET_MAX_ATTEMPTS || 5);
 const RESET_REQUEST_COOLDOWN_SECONDS = Number(
@@ -147,7 +148,16 @@ async function login(req, res) {
     const match = await bcrypt.compare(password, user.passwordhash);
     if (!match) return res.status(400).json({ error: "Username o password errati" });
 
-    const token = jwt.sign({ userId: user.userid }, JWT_SECRET, { expiresIn: "8h" });
+    const token = jwt.sign(
+  {
+    userId: user.userid,
+  },
+  JWT_SECRET,
+  {
+    expiresIn:
+      JWT_EXPIRES_IN,
+  }
+);
 
     await db.query(
       `INSERT INTO loginhistory (userid, logintime)
