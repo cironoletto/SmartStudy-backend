@@ -1,23 +1,46 @@
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 
-const uploadDir = "uploads/";
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir);
-}
+const uploadDir = path.join(
+  "uploads",
+  "quiz"
+);
+
+fs.mkdirSync(uploadDir, {
+  recursive: true,
+});
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
+  destination: (
+    _req,
+    _file,
+    callback
+  ) => {
+    callback(null, uploadDir);
   },
-  filename: (req, file, cb) => {
-    cb(
+
+  filename: (
+    _req,
+    file,
+    callback
+  ) => {
+    const originalExtension =
+      path.extname(
+        file?.originalname || ""
+      );
+
+    const extension =
+      originalExtension &&
+      originalExtension.length <= 10
+        ? originalExtension
+            .toLowerCase()
+        : ".jpg";
+
+    callback(
       null,
-      Date.now() +
-        "-" +
-        Math.round(Math.random() * 1e9) +
-        path.extname(file.originalname)
+      `${Date.now()}-${crypto.randomUUID()}${extension}`
     );
   },
 });
@@ -25,18 +48,30 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
 
-  // 🔒 LIMITE DIMENSIONE (CRUCIALE PER RAILWAY)
   limits: {
-    fileSize: 12 * 1024 * 1024, // 12 MB per immagine
-    files: 5, // max 5 immagini
+    fileSize:
+      15 * 1024 * 1024,
+    files: 10,
   },
 
-  // 🔒 SOLO IMMAGINI
-  fileFilter: (req, file, cb) => {
-    if (!file.mimetype.startsWith("image/")) {
-      return cb(new Error("Solo immagini consentite"), false);
+  fileFilter: (
+    _req,
+    file,
+    callback
+  ) => {
+    if (
+      !file?.mimetype
+        ?.startsWith("image/")
+    ) {
+      return callback(
+        new Error(
+          "INVALID_IMAGE_TYPE"
+        ),
+        false
+      );
     }
-    cb(null, true);
+
+    callback(null, true);
   },
 });
 

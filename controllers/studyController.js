@@ -22,20 +22,80 @@ function detectSubjectFromText(text) {
   return "Studio";
 }
 
+function removeFile(filePath) {
+  if (!filePath) return;
+
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch (err) {
+    console.warn(
+      "Impossibile eliminare file temporaneo:",
+      filePath,
+      err?.message
+    );
+  }
+}
+
+function cleanupFiles(files) {
+  if (!Array.isArray(files)) return;
+
+  for (const file of files) {
+    removeFile(file?.path);
+  }
+}
+
 exports.processFromImages = async (req, res) => {
+  const files = Array.isArray(req.files)
+    ? req.files
+    : [];
+
+  let createdSessionID = null;
+
   try {
     const userID = req.user?.userId;
-    if (!userID) return res.status(401).json({ error: "Utente non autenticato" });
 
-    const mode = (req.body.mode || "summary").toLowerCase();
-    if (!["summary", "scientific", "oral"].includes(mode)) {
-      return res.status(400).json({ error: "STUDY_MODE_INVALID" });
+    if (!userID) {
+      return res.status(401).json({
+        error: "UNAUTHORIZED",
+        message: "Utente non autenticato",
+      });
     }
 
-    const subscription = await getSubscriptionStatus(userID);
-    const policy = getUsagePolicy(subscription.isPro);
+    const mode = String(
+      req.body?.mode || "summary"
+    ).toLowerCase();
 
-    const limitCheck = await checkLimit(userID, "study_sessions", policy.studyDaily);
+    if (
+      ![
+        "summary",
+        "scientific",
+        "oral",
+      ].includes(mode)
+    ) {
+      return res.status(400).json({
+        error: "STUDY_MODE_INVALID",
+      });
+    }
+
+    const subscription =
+      await getSubscriptionStatus(
+        userID
+      );
+
+    const policy =
+      getUsagePolicy(
+        subscription.isPro
+      );
+
+    const limitCheck =
+      await checkLimit(
+        userID,
+        "study_sessions",
+        policy.studyDaily
+      );
+
     if (!limitCheck.allowed) {
       return res.status(403).json({
         error: "STUDY_DAILY_LIMIT",
@@ -47,97 +107,213 @@ exports.processFromImages = async (req, res) => {
       });
     }
 
-    const files = req.files || [];
     if (!files.length) {
-      return res.status(400).json({ error: "Nessuna immagine fornita" });
+      return res.status(400).json({
+        error: "NO_IMAGES",
+        message: "Nessuna immagine fornita",
+      });
     }
 
-    if (files.length > policy.studyMaxImages) {
+    if (
+      files.length >
+      policy.studyMaxImages
+    ) {
       return res.status(400).json({
         error: "IMAGE_LIMIT_EXCEEDED",
+        message:
+          `Puoi elaborare al massimo ${policy.studyMaxImages} immagini.`,
         limit: policy.studyMaxImages,
       });
     }
 
     let rawText = "";
+
     for (const file of files) {
-      try {
-        const text = await ocrService.extractTextFromImages([file]);
-        rawText += "\n" + (text || "");
-      } finally {
-        try { fs.unlinkSync(file.path); } catch {}
-      }
+      const text =
+        await ocrService
+          .extractTextFromImages(
+            [file]
+          );
+
+      rawText +=
+        `\n${text || ""}`;
     }
 
-    rawText = rawText.trim();
+    rawText =
+      rawText.trim();
+
     if (rawText.length < 15) {
-      return res.status(400).json({ error: "Testo OCR non valido" });
+      return res.status(400).json({
+        error: "OCR_TEXT_TOO_SHORT",
+        message:
+          "Il testo nelle immagini non è abbastanza leggibile.",
+      });
     }
 
-    const subject = detectSubjectFromText(rawText);
-
-    const qSession = await db.query(
-      `INSERT INTO study_sessions (userid, subject, type, rawtext, createdat)
-       VALUES ($1,$2,$3,$4,NOW())
-       RETURNING sessionid`,
-      [userID, subject, mode, rawText]
-    );
-
-    const sessionID = qSession.rows[0].sessionid;
     const payload = {
-      sessionID,
       limit: policy.studyDaily,
       isPro: subscription.isPro,
       ocrText: rawText,
     };
 
     if (mode === "summary") {
-      payload.summary = await aiService.generateSummary(rawText);
-      if (!payload.summary || payload.summary.startsWith("Errore")) {
-        throw new Error("SUMMARY_GENERATION_FAILED");
+      payload.summary =
+        await aiService
+          .generateSummary(rawText);
+
+      if (
+        !payload.summary ||
+        payload.summary
+          .startsWith("Errore")
+      ) {
+        throw new Error(
+          "SUMMARY_GENERATION_FAILED"
+        );
       }
     }
 
     if (mode === "scientific") {
-      const solution = await aiService.solveScientificGuided(rawText);
-      if (!solution || !solution.finalAnswer) {
+      const solution =
+        await aiService
+          .solveScientificGuided(
+            rawText
+          );
+
+      if (
+        !solution ||
+        !solution.finalAnswer
+      ) {
         return res.status(400).json({
-          error: "SCIENTIFIC_NOT_SOLVABLE",
-          message: "Impossibile risolvere il problema scientifico",
+          error:
+            "SCIENTIFIC_NOT_SOLVABLE",
+          message:
+            "Impossibile risolvere il problema scientifico",
         });
       }
 
-      payload.solutionSteps = solution.steps || [];
-      payload.finalAnswer = solution.finalAnswer;
-      payload.fallback = !!solution.fallback;
+      payload.solutionSteps =
+        Array.isArray(
+          solution.steps
+        )
+          ? solution.steps
+          : [];
+
+      payload.finalAnswer =
+        solution.finalAnswer;
+
+      payload.fallback =
+        Boolean(
+          solution.fallback
+        );
     }
 
-   if (mode === "oral") {
-  payload.summary = await aiService.generateOralSummary(rawText);
-  if (!payload.summary || payload.summary.startsWith("Errore")) {
-    throw new Error("ORAL_SUMMARY_GENERATION_FAILED");
-  }
-}
+    if (mode === "oral") {
+      payload.summary =
+        await aiService
+          .generateOralSummary(
+            rawText
+          );
 
-/* -------------------------------------------------
-   SALVATAGGIO RIASSUNTO
-------------------------------------------------- */
-if (payload.summary) {
-  await db.query(
-    `INSERT INTO study_summaries
-       (sessionid, summary)
-     VALUES ($1, $2)`,
-    [sessionID, payload.summary]
-  );
-}
+      if (
+        !payload.summary ||
+        payload.summary
+          .startsWith("Errore")
+      ) {
+        throw new Error(
+          "ORAL_SUMMARY_GENERATION_FAILED"
+        );
+      }
+    }
 
-await incrementUsage(userID, "study_sessions");
-    payload.remaining = Math.max(0, Number(limitCheck.remaining || 0) - 1);
+    const subject =
+      detectSubjectFromText(
+        rawText
+      );
+
+    const sessionResult =
+      await db.query(
+        `INSERT INTO study_sessions
+           (userid, subject, type, rawtext, createdat)
+         VALUES
+           ($1, $2, $3, $4, NOW())
+         RETURNING sessionid`,
+        [
+          userID,
+          subject,
+          mode,
+          rawText,
+        ]
+      );
+
+    createdSessionID =
+      sessionResult
+        .rows[0]
+        .sessionid;
+
+    payload.sessionID =
+      createdSessionID;
+
+    if (payload.summary) {
+      await db.query(
+        `INSERT INTO study_summaries
+           (sessionid, summary)
+         VALUES
+           ($1, $2)`,
+        [
+          createdSessionID,
+          payload.summary,
+        ]
+      );
+    }
+
+    await incrementUsage(
+      userID,
+      "study_sessions"
+    );
+
+    payload.remaining =
+      Math.max(
+        0,
+        Number(
+          limitCheck.remaining || 0
+        ) - 1
+      );
 
     return res.json(payload);
   } catch (err) {
-    console.error("processFromImages:", err);
-    return res.status(500).json({ error: "Errore elaborazione studio" });
+    console.error(
+      "processFromImages:",
+      err
+    );
+
+    if (createdSessionID) {
+      try {
+        await db.query(
+          `DELETE FROM study_summaries
+           WHERE sessionid = $1`,
+          [createdSessionID]
+        );
+
+        await db.query(
+          `DELETE FROM study_sessions
+           WHERE sessionid = $1`,
+          [createdSessionID]
+        );
+      } catch (cleanupError) {
+        console.error(
+          "Errore pulizia sessione incompleta:",
+          cleanupError
+        );
+      }
+    }
+
+    return res.status(500).json({
+      error: "STUDY_PROCESSING_ERROR",
+      message:
+        "Non è stato possibile elaborare il contenuto.",
+    });
+  } finally {
+    cleanupFiles(files);
   }
 };
 
@@ -384,39 +560,68 @@ exports.getStudySessions = async (req, res) => {
 
 exports.getStudySession = async (req, res) => {
   try {
-    const userID = req.user.userId;
-    const { sessionID } = req.params;
+    const userID =
+      req.user?.userId;
 
-    const q = await db.query(
-      `SELECT
-         s.sessionid AS "sessionID",
-         s.subject,
-         s.type,
-         s.rawtext AS "rawText",
-         s.createdat AS "createdAt",
-         s.rating,
-         ss.summary,
-         ss.audiourl AS "audioUrl"
-       FROM study_sessions s
+    const sessionID =
+      Number(
+        req.params?.sessionID
+      );
 
-       LEFT JOIN LATERAL (
-         SELECT
-           summary,
-           audiourl
-         FROM study_summaries
-         WHERE sessionid = s.sessionid
-         ORDER BY summaryid DESC
-         LIMIT 1
-       ) ss ON TRUE
+    if (!userID) {
+      return res.status(401).json({
+        error: "UNAUTHORIZED",
+      });
+    }
 
-       WHERE s.sessionid = $1
-         AND s.userid = $2`,
-      [sessionID, userID]
+    if (
+      !Number.isInteger(
+        sessionID
+      ) ||
+      sessionID <= 0
+    ) {
+      return res.status(400).json({
+        error: "SESSION_INVALID",
+      });
+    }
+
+    const result =
+      await db.query(
+        `SELECT
+           s.sessionid AS "sessionID",
+           s.subject,
+           s.type,
+           s.rawtext AS "rawText",
+           s.createdat AS "createdAt",
+           s.rating,
+           ss.summary,
+           NULL::text AS "audioUrl"
+         FROM study_sessions s
+
+         LEFT JOIN LATERAL (
+           SELECT summary
+           FROM study_summaries
+           WHERE sessionid = s.sessionid
+           ORDER BY summaryid DESC
+           LIMIT 1
+         ) ss ON TRUE
+
+         WHERE s.sessionid = $1
+           AND s.userid = $2`,
+        [
+          sessionID,
+          userID,
+        ]
+      );
+
+    return res.json(
+      result.rows[0] || null
     );
-
-    return res.json(q.rows[0] || null);
   } catch (err) {
-    console.error("getStudySession:", err);
+    console.error(
+      "getStudySession:",
+      err
+    );
 
     return res.status(500).json({
       error: "STUDY_SESSION_ERROR",
@@ -424,6 +629,7 @@ exports.getStudySession = async (req, res) => {
     });
   }
 };
+
 
 exports.getOralStudyDetail = async (req, res) => {
   try {
