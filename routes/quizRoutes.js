@@ -233,7 +233,7 @@ const uploadQuizAudio = (
   );
 };
 
-router.use(authMiddleware);
+router.use(authMiddleware, require("../middleware/studyAccess"));
 
 /* Rotte statiche: devono precedere quelle con :quizID. */
 router.post(

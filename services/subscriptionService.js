@@ -22,7 +22,7 @@ function entitlementIsActive(entitlement) {
   return false;
 }
 
-async function getSubscriptionStatus(userId) {
+async function getSubscriptionStatus(userId, { recheckFree = false } = {}) {
   const appUserId = String(userId);
   const entitlementId =
     process.env.REVENUECAT_ENTITLEMENT_ID || "SmartStudyMobile Pro";
@@ -39,7 +39,10 @@ async function getSubscriptionStatus(userId) {
   }
 
   const cached = cache.get(appUserId);
-  if (cached && Date.now() - cached.savedAt < CACHE_TTL_MS) {
+  const cachedPlanValid = cached && (cached.value.isPro
+    ? entitlementIsActive(cached.entitlement)
+    : !recheckFree);
+  if (cachedPlanValid && Date.now() - cached.savedAt < CACHE_TTL_MS) {
     return cached.value;
   }
 
@@ -68,7 +71,7 @@ async function getSubscriptionStatus(userId) {
       managementUrl: subscriber.management_url || null,
     };
 
-    cache.set(appUserId, { savedAt: Date.now(), value });
+    cache.set(appUserId, { savedAt: Date.now(), entitlement, value });
     return value;
   } catch (error) {
     console.error(
@@ -77,7 +80,7 @@ async function getSubscriptionStatus(userId) {
     );
 
     // If RevenueCat is temporarily unavailable, reuse a recent cached status.
-    if (cached) return cached.value;
+    if (cached?.value.isPro && entitlementIsActive(cached.entitlement)) return cached.value;
 
     // Fail closed to protect paid API costs.
     return {

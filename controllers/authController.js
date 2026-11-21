@@ -173,6 +173,7 @@ async function login(req, res) {
         username: user.username,
         fullName: user.fullname,
         email: user.email || null,
+      freeTrialEndsAt: user.free_trial_ends_at,
       },
     });
   } catch (err) {
@@ -194,6 +195,7 @@ async function me(req, res) {
       username: user.username,
       fullName: user.fullname,
       email: user.email || null,
+      freeTrialEndsAt: user.free_trial_ends_at,
     });
   } catch (err) {
     console.error("ME ERROR:", err);

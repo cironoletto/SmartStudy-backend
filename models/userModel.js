@@ -13,7 +13,7 @@ exports.createUser = async (username, passwordHash, fullName, email) => {
 
 exports.getUserByUsername = async (username) => {
   const result = await db.query(
-    `SELECT userid, username, passwordhash, fullname, email
+    `SELECT userid, username, passwordhash, fullname, email, free_trial_ends_at
      FROM users
      WHERE LOWER(username) = LOWER($1)
      LIMIT 1`,
@@ -25,7 +25,7 @@ exports.getUserByUsername = async (username) => {
 
 exports.getUserByEmail = async (email) => {
   const result = await db.query(
-    `SELECT userid, username, passwordhash, fullname, email
+    `SELECT userid, username, passwordhash, fullname, email, free_trial_ends_at
      FROM users
      WHERE LOWER(email) = LOWER($1)
      LIMIT 1`,
@@ -37,7 +37,7 @@ exports.getUserByEmail = async (email) => {
 
 exports.getUserById = async (userId) => {
   const result = await db.query(
-    `SELECT userid, username, passwordhash, fullname, email
+    `SELECT userid, username, passwordhash, fullname, email, free_trial_ends_at
      FROM users
      WHERE userid = $1`,
     [userId]

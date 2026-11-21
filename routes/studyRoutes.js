@@ -296,59 +296,52 @@ const uploadOralAudio = (
   );
 };
 
+router.use(authMiddleware, require("../middleware/studyAccess"));
+
 router.post(
   "/from-images",
-  authMiddleware,
   uploadStudyImages,
   studyController.processFromImages
 );
 
 router.post(
   "/scientific/explain-step",
-  authMiddleware,
   studyController.explainScientificStep
 );
 
 router.post(
   "/evaluate-oral",
-  authMiddleware,
   uploadOralAudio,
   studyController.evaluateOral
 );
 
 router.get(
   "/sessions",
-  authMiddleware,
   studyController.getStudySessions
 );
 
 router.get(
   "/session/:sessionID",
-  authMiddleware,
   studyController.getStudySession
 );
 
 router.get(
   "/oral/:sessionID",
-  authMiddleware,
   studyController.getOralStudyDetail
 );
 
 router.post(
   "/session/:sessionID/rating",
-  authMiddleware,
   studyController.setRating
 );
 
 router.get(
   "/stats/global",
-  authMiddleware,
   studyController.getGlobalStats
 );
 
 router.get(
   "/stats",
-  authMiddleware,
   studyController.getStudyStats
 );
 

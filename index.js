@@ -132,6 +132,10 @@ async function ensurePasswordResetSchema() {
 async function startServer() {
   try {
     await ensurePasswordResetSchema();
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS free_trial_ends_at TIMESTAMPTZ
+      NOT NULL DEFAULT (CURRENT_TIMESTAMP + INTERVAL '168 hours')
+    `);
 
     app.listen(PORT, () => {
       console.log(`Server avviato correttamente sulla porta ${PORT}`);
