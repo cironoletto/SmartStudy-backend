@@ -233,15 +233,18 @@ exports.processFromImages = async (req, res) => {
     const sessionResult =
       await db.query(
         `INSERT INTO study_sessions
-           (userid, subject, type, rawtext, createdat)
+           (userid, subject, type, rawtext, createdat, scientific_solution)
          VALUES
-           ($1, $2, $3, $4, NOW())
+           ($1, $2, $3, $4, NOW(), $5::jsonb)
          RETURNING sessionid`,
         [
           userID,
           subject,
           mode,
           rawText,
+          mode === "scientific" ? JSON.stringify({
+            solutionSteps: payload.solutionSteps, finalAnswer: payload.finalAnswer,
+          }) : null,
         ]
       );
 
@@ -415,6 +418,18 @@ exports.explainScientificStep = async (req, res) => {
         "STEP_EXPLANATION_FAILED"
       );
     }
+
+    const savedStep = { step, explanation: explanation.explanation,
+      why: explanation.why || "", rule: explanation.rule || "" };
+    await db.query(
+      `UPDATE study_sessions SET scientific_solution =
+         COALESCE(scientific_solution, '{}'::jsonb) ||
+         jsonb_build_object('explanations',
+           COALESCE(scientific_solution->'explanations', '{}'::jsonb) ||
+           jsonb_build_object($3::text, $4::jsonb))
+       WHERE sessionid = $1 AND userid = $2 AND type = 'scientific'`,
+      [sessionID, userID, String(stepNumber), JSON.stringify(savedStep)]
+    );
 
     return res.json({
       sessionID,
@@ -595,6 +610,7 @@ exports.getStudySession = async (req, res) => {
            s.createdat AS "createdAt",
            s.rating,
            ss.summary,
+           s.scientific_solution AS solution,
            NULL::text AS "audioUrl"
          FROM study_sessions s
 
@@ -614,9 +630,33 @@ exports.getStudySession = async (req, res) => {
         ]
       );
 
-    return res.json(
-      result.rows[0] || null
-    );
+    const session = result.rows[0];
+    if (!session) return res.json(null);
+    const { solution, ...detail } = session;
+    if (detail.type === "scientific") {
+      Object.assign(detail, solution || {});
+      if (!detail.solutionSteps && !detail.finalAnswer) {
+        // Some databases imported older solutions into study_problems.
+        const { rows } = await db.query("SELECT to_regclass('study_problems') AS legacy");
+        if (rows[0].legacy) {
+          const history = await db.query(
+            `SELECT solutionsteps, finalanswer FROM study_problems
+             WHERE sessionid = $1 ORDER BY problemid DESC LIMIT 1`, [sessionID]
+          );
+          if (history.rows.length) {
+            const { solutionsteps, finalanswer } = history.rows[0];
+            let steps = solutionsteps;
+            try {
+              const parsed = JSON.parse(steps);
+              if (Array.isArray(parsed)) steps = parsed;
+            } catch { /* Older records may contain plain text. */ }
+            detail.solutionSteps = steps;
+            detail.finalAnswer = finalanswer;
+          }
+        }
+      }
+    }
+    return res.json(detail);
   } catch (err) {
     console.error(
       "getStudySession:",

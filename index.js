@@ -137,6 +137,10 @@ async function startServer() {
       NOT NULL DEFAULT (CURRENT_TIMESTAMP + INTERVAL '168 hours')
     `);
 
+    await pool.query(`
+      ALTER TABLE study_sessions ADD COLUMN IF NOT EXISTS scientific_solution JSONB
+    `);
+
     app.listen(PORT, () => {
       console.log(`Server avviato correttamente sulla porta ${PORT}`);
     });
