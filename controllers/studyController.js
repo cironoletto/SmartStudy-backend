@@ -126,9 +126,14 @@ exports.processFromImages = async (req, res) => {
       });
     }
 
+    const visual = mode === "scientific" && req.body.shareScientificPhoto === "yes";
+    const number = visual ? String(req.body.exerciseNumber || "").trim() : "";
+    if (number && !/^\d{1,5}$/.test(number)) {
+      return res.status(400).json({ message: "Numero di esercizio non valido." });
+    }
     let rawText = "";
 
-    for (const file of files) {
+    for (const file of (visual ? [] : files)) {
       const text =
         await ocrService
           .extractTextFromImages(
@@ -142,7 +147,7 @@ exports.processFromImages = async (req, res) => {
     rawText =
       rawText.trim();
 
-    if (rawText.length < 15) {
+    if (!visual && rawText.length < 15) {
       return res.status(400).json({
         error: "OCR_TEXT_TOO_SHORT",
         message:
@@ -176,7 +181,7 @@ exports.processFromImages = async (req, res) => {
       const solution =
         await aiService
           .solveScientificGuided(
-            rawText
+            rawText, visual ? { files, number } : undefined
           );
 
       if (
@@ -191,6 +196,15 @@ exports.processFromImages = async (req, res) => {
         });
       }
 
+      if (visual) {
+        if (solution.fallback) {
+          await incrementUsage(userID, "study_sessions");
+          return res.status(422).json({ error: "SCIENTIFIC_CLARIFICATION",
+            message: solution.clarification || "Indica il numero dell’esercizio o fotografa più da vicino la formula." });
+        }
+        rawText = solution.exerciseText;
+        payload.ocrText = rawText;
+      }
       payload.solutionSteps =
         Array.isArray(
           solution.steps
