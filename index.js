@@ -38,6 +38,15 @@ app.use(cors({
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true, limit: "20mb" }));
 
+app.get("/api/releases/ios/:channel", (req, res) => {
+  const variables = { testflight: "IOS_TESTFLIGHT_BUILD", store: "IOS_STORE_BUILD" };
+  const channel = req.params.channel;
+  if (!Object.hasOwn(variables, channel)) return res.sendStatus(404);
+  const latest = Number(process.env[variables[channel]]);
+  res.set("Cache-Control", "no-store");
+  return res.json({ build: Number.isSafeInteger(latest) && latest > 0 ? latest : null });
+});
+
 // Static files
 app.use("/audio", express.static(path.join(__dirname, "audio")));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
