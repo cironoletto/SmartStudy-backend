@@ -4,10 +4,10 @@ const db = require("../db");
  * ✅ CHECK SENZA INCREMENTARE
  * Usato PRIMA di elaborare (preview / OCR / AI)
  */
-async function checkLimit(userID, feature, limit) {
+async function checkLimit(userID, feature, limit, executor = db) {
   const now = new Date();
 
-  const q = await db.query(
+  const q = await executor.query(
     `SELECT count, reset_at
      FROM usage_limits
      WHERE userid = $1 AND feature = $2`,

@@ -51,7 +51,7 @@ exports.processFromImages = async (req, res) => {
     ? req.files
     : [];
 
-  let createdSessionID = null;
+  let client;
 
   try {
     const userID = req.user?.userId;
@@ -196,12 +196,14 @@ exports.processFromImages = async (req, res) => {
         });
       }
 
+      if (solution.fallback) {
+        return res.status(422).json({
+          error: "SCIENTIFIC_CLARIFICATION",
+          message: solution.clarification || "Controlla il numero dell’esercizio e la leggibilità della formula.",
+        });
+      }
+
       if (visual) {
-        if (solution.fallback) {
-          await incrementUsage(userID, "study_sessions");
-          return res.status(422).json({ error: "SCIENTIFIC_CLARIFICATION",
-            message: solution.clarification || "Indica il numero dell’esercizio o fotografa più da vicino la formula." });
-        }
         rawText = solution.exerciseText;
         payload.ocrText = rawText;
       }
@@ -244,8 +246,17 @@ exports.processFromImages = async (req, res) => {
         rawText
       );
 
+    client = await db.getClient();
+    await client.query("BEGIN");
+    await client.query("SELECT userid FROM users WHERE userid = $1 FOR UPDATE", [userID]);
+    const available = await checkLimit(userID, "study_sessions", policy.studyDaily, client);
+    if (!available.allowed) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "STUDY_DAILY_LIMIT", feature: "study_sessions",
+        limit: policy.studyDaily, remaining: 0, isPro: subscription.isPro });
+    }
     const sessionResult =
-      await db.query(
+      await client.query(
         `INSERT INTO study_sessions
            (userid, subject, type, rawtext, createdat, scientific_solution)
          VALUES
@@ -262,7 +273,7 @@ exports.processFromImages = async (req, res) => {
         ]
       );
 
-    createdSessionID =
+    const createdSessionID =
       sessionResult
         .rows[0]
         .sessionid;
@@ -271,7 +282,7 @@ exports.processFromImages = async (req, res) => {
       createdSessionID;
 
     if (payload.summary) {
-      await db.query(
+      await client.query(
         `INSERT INTO study_summaries
            (sessionid, summary)
          VALUES
@@ -285,14 +296,15 @@ exports.processFromImages = async (req, res) => {
 
     await incrementUsage(
       userID,
-      "study_sessions"
+      "study_sessions", client
     );
+    await client.query("COMMIT");
 
     payload.remaining =
       Math.max(
         0,
         Number(
-          limitCheck.remaining || 0
+          available.remaining || 0
         ) - 1
       );
 
@@ -303,24 +315,9 @@ exports.processFromImages = async (req, res) => {
       err
     );
 
-    if (createdSessionID) {
-      try {
-        await db.query(
-          `DELETE FROM study_summaries
-           WHERE sessionid = $1`,
-          [createdSessionID]
-        );
-
-        await db.query(
-          `DELETE FROM study_sessions
-           WHERE sessionid = $1`,
-          [createdSessionID]
-        );
-      } catch (cleanupError) {
-        console.error(
-          "Errore pulizia sessione incompleta:",
-          cleanupError
-        );
+    if (client) {
+      try { await client.query("ROLLBACK"); } catch (rollbackError) {
+        console.error("Study rollback:", rollbackError.message);
       }
     }
 
@@ -330,6 +327,7 @@ exports.processFromImages = async (req, res) => {
         "Non è stato possibile elaborare il contenuto.",
     });
   } finally {
+    client?.release();
     cleanupFiles(files);
   }
 };
@@ -570,7 +568,7 @@ exports.getStudySessions = async (req, res) => {
          rating,
          NULL::text AS "audioUrl"
        FROM study_sessions
-       WHERE userid = $1
+       WHERE userid = $1 AND NOT scientific_failed
        ORDER BY createdat DESC`,
       [userID]
     );
@@ -637,7 +635,7 @@ exports.getStudySession = async (req, res) => {
          ) ss ON TRUE
 
          WHERE s.sessionid = $1
-           AND s.userid = $2`,
+           AND s.userid = $2 AND NOT s.scientific_failed`,
         [
           sessionID,
           userID,
@@ -764,7 +762,7 @@ exports.getStudyStats = async (req, res) => {
          COUNT(*) FILTER (WHERE type = 'oral')::int AS total_oral,
          AVG(rating)::float AS avg_rating
        FROM study_sessions
-       WHERE userid = $1`,
+       WHERE userid = $1 AND NOT scientific_failed`,
       [userID]
     );
 
@@ -788,7 +786,7 @@ exports.getStudyStats = async (req, res) => {
               COUNT(s.sessionid)::int AS sessions
        FROM days
        LEFT JOIN study_sessions s
-         ON s.userid = $1 AND s.createdat::date = days.day
+         ON s.userid = $1 AND NOT s.scientific_failed AND s.createdat::date = days.day
        GROUP BY days.day
        ORDER BY days.day`,
       [userID]
@@ -816,7 +814,7 @@ exports.getStudyStats = async (req, res) => {
 exports.getGlobalStats = async (_req, res) => {
   try {
     const q = await db.query(
-      `SELECT COUNT(*)::int AS total_sessions FROM study_sessions`
+      `SELECT COUNT(*)::int AS total_sessions FROM study_sessions WHERE NOT scientific_failed`
     );
     return res.json(q.rows[0]);
   } catch (err) {

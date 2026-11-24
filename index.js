@@ -141,6 +141,33 @@ async function startServer() {
       ALTER TABLE study_sessions ADD COLUMN IF NOT EXISTS scientific_solution JSONB
     `);
 
+    await pool.query(`
+      DO $repair$
+      BEGIN
+        LOCK TABLE study_sessions IN SHARE ROW EXCLUSIVE MODE;
+        IF EXISTS (
+          SELECT 1 FROM pg_attribute WHERE attrelid = 'study_sessions'::regclass
+          AND attname = 'scientific_failed' AND NOT attisdropped
+        ) THEN RETURN; END IF;
+
+        ALTER TABLE study_sessions ADD COLUMN scientific_failed boolean NOT NULL DEFAULT false;
+        UPDATE study_sessions SET scientific_failed = true
+        WHERE type = 'scientific' AND scientific_solution->>'finalAnswer' IN (
+          'Controlla la foto dell''esercizio e assicurati che tutti i dati, i numeri e i simboli siano leggibili.',
+          'Riprova con una foto piu nitida e completa dell''esercizio.'
+        );
+
+        -- Older visual requests could increment usage without creating a session.
+        UPDATE usage_limits u SET count = LEAST(u.count, (
+          SELECT COUNT(*)::int FROM study_sessions s
+          WHERE s.userid = u.userid AND NOT s.scientific_failed
+            AND s.createdat >= u.reset_at - INTERVAL '1 day' AND s.createdat < u.reset_at
+        ))
+        WHERE u.feature = 'study_sessions' AND u.reset_at > CURRENT_TIMESTAMP AND u.count > 0;
+      END
+      $repair$
+    `);
+
     app.listen(PORT, () => {
       console.log(`Server avviato correttamente sulla porta ${PORT}`);
     });
