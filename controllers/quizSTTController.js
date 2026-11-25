@@ -5,7 +5,7 @@ const { getSubscriptionStatus } = require("../services/subscriptionService");
 const { getUsagePolicy } = require("../services/usagePolicy");
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-transcribe";
+const TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe";
 
 exports.stt = async (req, res) => {
   let fixedPath = null;

@@ -4,7 +4,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 
 const uploadDir = path.join(
-  "uploads",
+  require("os").tmpdir(), "smartstudy-uploads",
   "quiz"
 );
 

@@ -1,4 +1,5 @@
 console.log("USING quizFromOCRController.js VERSION PG");
+const outputLanguage = require("../services/outputLanguage");
 const fs = require("fs");
 const OpenAI = require("openai");
 const { extractTextFromImages } = require("./localOCR");
@@ -16,7 +17,7 @@ const QUIZ_SYSTEM_PROMPT = `
 Sei un generatore di quiz scolastici.
 
 REGOLE OBBLIGATORIE:
-- Genera ALMENO 5 domande.
+- Genera ALMENO 5 domande. Includi almeno una domanda aperta con risposta ideale.
 - Ogni domanda MCQ deve avere ESATTAMENTE 4 scelte in "choices".
 - "correctIndex" deve essere 0..3.
 - Non restituire mai "questions" vuoto.
@@ -43,66 +44,28 @@ RISPONDI SOLO CON JSON:
   ]
 }`;
 
-function normalizeQuizJson(quizJson) {
-  const title = quizJson?.title || "Quiz generato";
+function normalizeQuizJson(quizJson, english) {
+  const title = quizJson?.title || (english ? "Generated quiz" : "Quiz generato");
   const description = quizJson?.description || "";
-  let questions = Array.isArray(quizJson?.questions) ? quizJson.questions : [];
-
-  const hasOpen = questions.some(q => q?.type === "open");
-  if (!hasOpen && questions.length > 0) {
-    questions.push({
-      type: "open",
-      text: "Spiega con parole tue l'argomento principale del quiz.",
-      idealAnswer: "",
-      points: 1,
-    });
-  }
-
-  questions = questions.map(q => {
-    const type = q?.type || "mcq";
-
-    if (type === "mcq") {
-      const choices = Array.isArray(q?.choices)
-        ? q.choices
-        : Array.isArray(q?.options)
-          ? q.options
-          : [];
-
-      return {
-        type: "mcq",
-        text: String(q?.text || "").trim(),
-        choices: choices.slice(0, 4),
-        correctIndex: Number.isInteger(q?.correctIndex) ? q.correctIndex : 0,
-        points: Number.isFinite(q?.points) ? q.points : 1,
-      };
+  const questions = [];
+  for (const q of Array.isArray(quizJson?.questions) ? quizJson.questions : []) {
+    const text = typeof q?.text === "string" ? q.text.trim() : "";
+    if (text.length < 3) continue;
+    const points = Number.isSafeInteger(q.points) && q.points > 0 ? q.points : 1;
+    if (q.type === "open") {
+      const idealAnswer = typeof q.idealAnswer === "string" ? q.idealAnswer.trim() : "";
+      if (idealAnswer) questions.push({ type: "open", text, idealAnswer, points });
+    } else if (q.type === "mcq") {
+      const choices = q.choices ?? q.options;
+      if (Array.isArray(choices) && choices.length === 4 &&
+          choices.every(choice => typeof choice === "string" && choice.trim()) &&
+          Number.isInteger(q.correctIndex) && q.correctIndex >= 0 && q.correctIndex < choices.length) {
+        questions.push({ type: "mcq", text, choices, correctIndex: q.correctIndex, points });
+      }
     }
-
-    return {
-      type: "open",
-      text: String(q?.text || "").trim(),
-      idealAnswer: String(q?.idealAnswer || "").trim(),
-      points: Number.isFinite(q?.points) ? q.points : 1,
-    };
-  });
-
-  questions = questions.filter(q => q.text && q.text.length >= 3);
-
-  if (questions.length < 5) {
-    throw new Error("QUIZ_TOO_FEW_VALID_QUESTIONS");
   }
-
-  questions = questions.map(q => {
-    if (q.type !== "mcq") return q;
-
-    let idx = Number.isInteger(q.correctIndex) ? q.correctIndex : 0;
-    idx = Math.max(0, Math.min(3, idx));
-
-    const padded = [...(Array.isArray(q.choices) ? q.choices : [])];
-    while (padded.length < 4) padded.push(`Opzione ${padded.length + 1}`);
-
-    return { ...q, choices: padded.slice(0, 4), correctIndex: idx };
-  });
-
+  if (questions.length < 5) throw new Error("QUIZ_TOO_FEW_VALID_QUESTIONS");
+  if (!questions.some(q => q.type === "open")) throw new Error("QUIZ_MISSING_OPEN_QUESTION");
   return { title, description, questions };
 }
 
@@ -141,13 +104,7 @@ if (requestID) {
     );
 
   if (existingQuiz) {
-    // Le immagini sono già state caricate da multer:
-    // eliminiamo i file temporanei.
-    for (const file of files) {
-      try {
-        fs.unlinkSync(file.path);
-      } catch {}
-    }
+
 
     const currentLimit =
       await checkLimit(
@@ -223,8 +180,6 @@ if (!files.length) {
         rawText += "\n" + (text || "");
       } catch (e) {
         console.warn("OCR failed:", file.filename || file.originalname);
-      } finally {
-        try { fs.unlinkSync(file.path); } catch {}
       }
     }
 
@@ -242,14 +197,14 @@ if (!files.length) {
       reasoning_effort: "none",
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: QUIZ_SYSTEM_PROMPT },
+        { role: "system", content: QUIZ_SYSTEM_PROMPT + "\n" + outputLanguage(req) },
         { role: "user", content: `Testo OCR:\n${truncatedText}` },
       ],
       temperature: 0.3,
     });
 
     const quizJson = JSON.parse(completion.choices[0].message.content);
-    const normalized = normalizeQuizJson(quizJson);
+    const normalized = normalizeQuizJson(quizJson, /^en\b/i.test(req.headers["accept-language"] || ""));
 
     const quizID =
   await quizModel.createQuizWithQuestions({
@@ -303,5 +258,9 @@ return res.json({
   } catch (err) {
     console.error("OCR QUIZ ERROR:", err);
     return res.status(500).json({ error: "Errore durante la generazione del quiz" });
+  } finally {
+    for (const file of req.files || []) {
+      try { fs.unlinkSync(file.path); } catch {}
+    }
   }
 };

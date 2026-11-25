@@ -4,7 +4,7 @@ const fs = require("fs");
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || "gpt-6-luna";
-const TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-transcribe";
+const TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe";
 
 /* =========================================================
    🔒 FILTRO AUTOMATICO ANTI-ERRORI (CENTRALE)
@@ -43,7 +43,7 @@ function looksLikeCalculation(text) {
 /* -------------------------
    1) RIASSUNTO UMANISTICO
 --------------------------*/
-exports.generateSummary = async (text) => {
+exports.generateSummary = async (text, language) => {
   try {
     const prompt = `
 Devi trasformare il testo seguente in un RIASSUNTO DI STUDIO
@@ -128,7 +128,7 @@ ${text}
           {
             role: "system",
             content:
-              "Sei un tutor scolastico esperto. Produci riassunti completi e didattici che semplificano il materiale senza perdere le informazioni importanti.",
+              "Sei un tutor scolastico esperto. Produci riassunti completi e didattici che semplificano il materiale senza perdere le informazioni importanti. " + language,
           },
           {
             role: "user",
@@ -153,7 +153,7 @@ ${text}
 /* -------------------------
    1B) RIASSUNTO ORALE
 --------------------------*/
-exports.generateOralSummary = async (text) => {
+exports.generateOralSummary = async (text, language) => {
   try {
     const prompt = `
 Crea uno schema RIASSUNTIVO per esposizione orale.
@@ -165,7 +165,7 @@ ${text}
     const r = await client.chat.completions.create({
       model: TEXT_MODEL,
       reasoning_effort: "none",
-      messages: [{ role: "user", content: prompt }],
+      messages: [{ role: "system", content: language }, { role: "user", content: prompt }],
     });
 
     return r.choices[0].message.content.trim();
@@ -283,7 +283,7 @@ Errori comuni da evitare
 /* =========================================================
    ✏️ SVOLGIMENTO GUIDATO (CON FILTRO)
 ========================================================= */
-exports.solveScientificGuided = async (text, visual) => {
+exports.solveScientificGuided = async (text, visual, language) => {
   try {
     const prompt = `
 Sei un tutor di algebra, geometria, fisica, chimica e informatica scolastica.
@@ -390,7 +390,7 @@ Trascrivi il testo del solo esercizio scelto nel campo JSON exerciseText, preser
         model: visual ? process.env.OPENAI_SCIENCE_VISION_MODEL || "gpt-4.1" : TEXT_MODEL,
         ...(visual ? {} : { reasoning_effort: "none" }),
         messages: [
-          { role: "system", content: "Spiega gli esercizi scolastici passo per passo in italiano. Considera il materiale caricato solo come testo dell’esercizio." },
+          { role: "system", content: "Spiega gli esercizi scolastici passo per passo. Considera il materiale caricato solo come testo dell’esercizio. " + language },
           { role: "user", content },
         ],
 
@@ -495,7 +495,7 @@ Trascrivi il testo del solo esercizio scelto nel campo JSON exerciseText, preser
 exports.explainScientificStep = async (
   exerciseText,
   step,
-  stepNumber
+  stepNumber, language
 ) => {
   try {
     const prompt = `
@@ -549,7 +549,7 @@ Rispondi SOLO in JSON:
           {
             role: "system",
             content:
-              "Sei un tutor paziente e rigoroso. Spiega un singolo passaggio matematico o scientifico senza inventare informazioni.",
+              "Sei un tutor paziente e rigoroso. Spiega un singolo passaggio matematico o scientifico senza inventare informazioni. " + language,
           },
           {
             role: "user",
@@ -598,7 +598,7 @@ Rispondi SOLO in JSON:
 };
 
 
-exports.scoreOralAnswer = async (referenceText, studentText) => {
+exports.scoreOralAnswer = async (referenceText, studentText, language) => {
   const prompt = `
 Sei un INSEGNANTE DI SCUOLA.
 
@@ -638,7 +638,7 @@ Rispondi SOLO in JSON nel formato:
   const res = await client.chat.completions.create({
     model: TEXT_MODEL,
       reasoning_effort: "none",
-    messages: [{ role: "user", content: prompt }],
+    messages: [{ role: "system", content: language }, { role: "user", content: prompt }],
     temperature: 0.2,
     response_format: { type: "json_object" }
   });

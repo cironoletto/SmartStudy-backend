@@ -10,12 +10,12 @@ const authMiddleware = require("../middleware/authMiddleware");
 const router = express.Router();
 
 const studyImageDir = path.join(
-  "uploads",
+  require("os").tmpdir(), "smartstudy-uploads",
   "study"
 );
 
 const studyAudioDir = path.join(
-  "uploads",
+  require("os").tmpdir(), "smartstudy-uploads",
   "audio"
 );
 

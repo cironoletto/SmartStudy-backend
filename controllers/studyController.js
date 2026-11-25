@@ -1,3 +1,4 @@
+const outputLanguage = require("../services/outputLanguage");
 const fs = require("fs");
 const db = require("../db");
 
@@ -164,7 +165,7 @@ exports.processFromImages = async (req, res) => {
     if (mode === "summary") {
       payload.summary =
         await aiService
-          .generateSummary(rawText);
+          .generateSummary(rawText, outputLanguage(req, true));
 
       if (
         !payload.summary ||
@@ -181,7 +182,7 @@ exports.processFromImages = async (req, res) => {
       const solution =
         await aiService
           .solveScientificGuided(
-            rawText, visual ? { files, number } : undefined
+            rawText, visual ? { files, number } : undefined, outputLanguage(req)
           );
 
       if (
@@ -227,7 +228,7 @@ exports.processFromImages = async (req, res) => {
       payload.summary =
         await aiService
           .generateOralSummary(
-            rawText
+            rawText, outputLanguage(req)
           );
 
       if (
@@ -419,7 +420,7 @@ exports.explainScientificStep = async (req, res) => {
       await aiService.explainScientificStep(
         exerciseText,
         step,
-        stepNumber
+        stepNumber, outputLanguage(req)
       );
 
     if (
@@ -471,6 +472,7 @@ exports.explainScientificStep = async (req, res) => {
 };
 
 exports.evaluateOral = async (req, res) => {
+  let client;
   try {
     const userID = req.user?.userId;
     const audioFile = req.file;
@@ -518,12 +520,21 @@ exports.evaluateOral = async (req, res) => {
       });
     }
 
-    const rubric = await aiService.scoreOralAnswer(reference, transcript);
-    if (!rubric || typeof rubric.voto_finale !== "number") {
+    const rubric = await aiService.scoreOralAnswer(reference, transcript, outputLanguage(req));
+    if (!rubric || !Number.isFinite(rubric.voto_finale) || rubric.voto_finale < 0 || rubric.voto_finale > 10) {
       throw new Error("ORAL_RUBRIC_INVALID");
     }
 
-    await db.query(
+    client = await db.getClient();
+    await client.query("BEGIN");
+    await client.query("SELECT userid FROM users WHERE userid = $1 FOR UPDATE", [userID]);
+    const available = await checkLimit(userID, "oral_evaluations", policy.oralDaily, client);
+    if (!available.allowed) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "LIMIT_EXCEEDED", feature: "oral_evaluations",
+        limit: policy.oralDaily, remaining: 0, isPro: subscription.isPro });
+    }
+    await client.query(
       `INSERT INTO study_oral_evaluations
        (sessionid, userid, aisummary, useraudiourl, aifeedback, score, transcript, createdat)
        VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())`,
@@ -531,26 +542,29 @@ exports.evaluateOral = async (req, res) => {
         sessionID,
         userID,
         reference,
-        audioFile.path,
+        null,
         rubric.commento_prof || "",
         rubric.voto_finale,
         transcript,
       ]
     );
 
-    await incrementUsage(userID, "oral_evaluations");
+    await incrementUsage(userID, "oral_evaluations", client);
+    await client.query("COMMIT");
 
     return res.json({
       rubric,
       transcript,
       isPro: subscription.isPro,
       limit: policy.oralDaily,
-      remaining: Math.max(0, Number(limitCheck.remaining || 0) - 1),
+      remaining: Math.max(0, Number(available.remaining || 0) - 1),
     });
   } catch (err) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
     console.error("evaluateOral:", err);
     return res.status(500).json({ error: "Errore valutazione orale" });
   } finally {
+    client?.release();
     try { fs.unlinkSync(req.file?.path); } catch {}
   }
 };
@@ -645,6 +659,14 @@ exports.getStudySession = async (req, res) => {
     const session = result.rows[0];
     if (!session) return res.json(null);
     const { solution, ...detail } = session;
+    if (detail.type === "oral") {
+      const { rows } = await db.query(
+        `SELECT score, aifeedback AS comment, createdat FROM study_oral_evaluations
+         WHERE sessionid = $1 AND userid = $2 AND score IS NOT NULL ORDER BY createdat DESC`,
+        [sessionID, userID]
+      );
+      detail.evaluations = rows;
+    }
     if (detail.type === "scientific") {
       Object.assign(detail, solution || {});
       if (!detail.solutionSteps && !detail.finalAnswer) {
@@ -700,8 +722,8 @@ exports.getOralStudyDetail = async (req, res) => {
     }
 
     const evalQ = await db.query(
-      `SELECT id, score, aifeedback AS comment, createdat
-       FROM study_oral_evaluations
+      `SELECT COALESCE(to_jsonb(e)->>'oralid', to_jsonb(e)->>'id') AS id, score, aifeedback AS comment, createdat
+       FROM study_oral_evaluations e
        WHERE sessionid = $1 AND userid = $2
        ORDER BY createdat DESC`,
       [sessionID, userID]
@@ -767,7 +789,7 @@ exports.getStudyStats = async (req, res) => {
     );
 
     const oralQ = await db.query(
-      `SELECT COUNT(*)::int AS total_oral_evaluations,
+      `SELECT COUNT(score)::int AS total_oral_evaluations,
               COUNT(*) FILTER (WHERE score >= 7)::int AS strong_orals,
               AVG(score)::float AS avg_oral_score
        FROM study_oral_evaluations

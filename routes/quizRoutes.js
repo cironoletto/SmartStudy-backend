@@ -14,7 +14,7 @@ const quizSTTController = require("../controllers/quizSTTController");
 const router = express.Router();
 
 const audioDir = path.join(
-  "uploads",
+  require("os").tmpdir(), "smartstudy-uploads",
   "quiz-audio"
 );
 
