@@ -296,6 +296,8 @@ const uploadOralAudio = (
   );
 };
 
+router.get("/stats", authMiddleware, studyController.getStudyStats);
+
 router.use(authMiddleware, require("../middleware/studyAccess"));
 
 router.post(
@@ -340,9 +342,6 @@ router.get(
   studyController.getGlobalStats
 );
 
-router.get(
-  "/stats",
-  studyController.getStudyStats
-);
+
 
 module.exports = router;

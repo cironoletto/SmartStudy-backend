@@ -768,27 +768,37 @@ exports.getStudyStats = async (req, res) => {
 
     const oralQ = await db.query(
       `SELECT COUNT(*)::int AS total_oral_evaluations,
+              COUNT(*) FILTER (WHERE score >= 7)::int AS strong_orals,
               AVG(score)::float AS avg_oral_score
        FROM study_oral_evaluations
        WHERE userid = $1`,
       [userID]
     );
 
+    const quizQ = await db.query(
+      `SELECT COUNT(*)::int AS completed_quizzes FROM attempts
+       WHERE userid = $1 AND completedat IS NOT NULL`,
+      [userID]
+    );
+
     const byDayQ = await db.query(
       `WITH days AS (
-         SELECT generate_series(
-           CURRENT_DATE - INTERVAL '6 days',
-           CURRENT_DATE,
-           INTERVAL '1 day'
-         )::date AS day
+         SELECT generate_series(CURRENT_DATE - 6, CURRENT_DATE, INTERVAL '1 day')::date AS day
+       ), activity AS (
+         SELECT createdat::date AS day, 'study' AS kind FROM study_sessions
+         WHERE userid = $1 AND NOT scientific_failed AND createdat >= CURRENT_DATE - 6
+         UNION ALL
+         SELECT completedat::date, 'quiz' FROM attempts
+         WHERE userid = $1 AND completedat >= CURRENT_DATE - 6
+         UNION ALL
+         SELECT createdat::date, 'oral' FROM study_oral_evaluations
+         WHERE userid = $1 AND createdat >= CURRENT_DATE - 6
        )
        SELECT TO_CHAR(days.day, 'DD/MM') AS label,
-              COUNT(s.sessionid)::int AS sessions
-       FROM days
-       LEFT JOIN study_sessions s
-         ON s.userid = $1 AND NOT s.scientific_failed AND s.createdat::date = days.day
-       GROUP BY days.day
-       ORDER BY days.day`,
+              COUNT(*) FILTER (WHERE kind = 'study')::int AS sessions,
+              COUNT(activity.kind)::int AS activities
+       FROM days LEFT JOIN activity USING (day)
+       GROUP BY days.day ORDER BY days.day`,
       [userID]
     );
 
@@ -801,6 +811,8 @@ exports.getStudyStats = async (req, res) => {
       totalScientific: totals.total_scientific || 0,
       totalOral: totals.total_oral || 0,
       totalOralEvaluations: oral.total_oral_evaluations || 0,
+      completedQuizzes: quizQ.rows[0].completed_quizzes,
+      strongOrals: oral.strong_orals,
       avgOralScore: oral.avg_oral_score || 0,
       avgRating: totals.avg_rating || 0,
       byDay: byDayQ.rows,
