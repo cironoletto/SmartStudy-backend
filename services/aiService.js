@@ -1,3 +1,4 @@
+const { plainSummary, plainTextStyle } = require("./summaryText");
 // require("dotenv").config();
 const OpenAI = require("openai");
 const fs = require("fs");
@@ -128,7 +129,7 @@ ${text}
           {
             role: "system",
             content:
-              "Sei un tutor scolastico esperto. Produci riassunti completi e didattici che semplificano il materiale senza perdere le informazioni importanti. " + language,
+              "Sei un tutor scolastico esperto. Produci riassunti completi e didattici che semplificano il materiale senza perdere le informazioni importanti. " + language + " " + plainTextStyle,
           },
           {
             role: "user",
@@ -138,7 +139,7 @@ ${text}
         temperature: 0.25,
       });
 
-    return response.choices[0].message.content.trim();
+    return plainSummary(response.choices[0].message.content.trim());
 
   } catch (err) {
     console.error(
@@ -165,10 +166,10 @@ ${text}
     const r = await client.chat.completions.create({
       model: TEXT_MODEL,
       reasoning_effort: "none",
-      messages: [{ role: "system", content: language }, { role: "user", content: prompt }],
+      messages: [{ role: "system", content: language + " " + plainTextStyle }, { role: "user", content: prompt }],
     });
 
-    return r.choices[0].message.content.trim();
+    return plainSummary(r.choices[0].message.content.trim());
   } catch {
     return "Errore nella generazione dello schema orale.";
   }

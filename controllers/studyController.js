@@ -1,3 +1,5 @@
+const { subjectInstruction, supportedSubject } = require("../services/oralSubject");
+const { plainSummary } = require("../services/summaryText");
 const outputLanguage = require("../services/outputLanguage");
 const fs = require("fs");
 const db = require("../db");
@@ -224,11 +226,15 @@ exports.processFromImages = async (req, res) => {
         );
     }
 
+    const selectedSubject = mode === "oral" ? req.body?.oralSubject : null;
+    if (selectedSubject && !supportedSubject(selectedSubject)) {
+      return res.status(400).json({ error: "INVALID_ORAL_SUBJECT" });
+    }
     if (mode === "oral") {
       payload.summary =
         await aiService
           .generateOralSummary(
-            rawText, outputLanguage(req)
+            rawText, outputLanguage(req) + subjectInstruction(selectedSubject)
           );
 
       if (
@@ -242,7 +248,7 @@ exports.processFromImages = async (req, res) => {
       }
     }
 
-    const subject =
+    const subject = selectedSubject ||
       detectSubjectFromText(
         rawText
       );
@@ -485,7 +491,7 @@ exports.evaluateOral = async (req, res) => {
     }
 
     const sessionQ = await db.query(
-      `SELECT sessionid, rawtext
+      `SELECT sessionid, rawtext, subject
        FROM study_sessions
        WHERE sessionid = $1 AND userid = $2 AND type = 'oral'`,
       [sessionID, userID]
@@ -520,7 +526,7 @@ exports.evaluateOral = async (req, res) => {
       });
     }
 
-    const rubric = await aiService.scoreOralAnswer(reference, transcript, outputLanguage(req));
+    const rubric = await aiService.scoreOralAnswer(reference, transcript, outputLanguage(req) + subjectInstruction(sessionQ.rows[0].subject));
     if (!rubric || !Number.isFinite(rubric.voto_finale) || rubric.voto_finale < 0 || rubric.voto_finale > 10) {
       throw new Error("ORAL_RUBRIC_INVALID");
     }
@@ -553,6 +559,7 @@ exports.evaluateOral = async (req, res) => {
     await client.query("COMMIT");
 
     return res.json({
+      subject: sessionQ.rows[0].subject,
       rubric,
       transcript,
       isPro: subscription.isPro,
@@ -659,6 +666,7 @@ exports.getStudySession = async (req, res) => {
     const session = result.rows[0];
     if (!session) return res.json(null);
     const { solution, ...detail } = session;
+    if (detail.type === "summary" || detail.type === "oral") detail.summary = plainSummary(detail.summary);
     if (detail.type === "oral") {
       const { rows } = await db.query(
         `SELECT score, aifeedback AS comment, createdat FROM study_oral_evaluations
