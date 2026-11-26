@@ -797,11 +797,18 @@ exports.getStudyStats = async (req, res) => {
     );
 
     const oralQ = await db.query(
-      `SELECT COUNT(score)::int AS total_oral_evaluations,
+      `WITH graded AS (
+         SELECT NULLIF(NULLIF(TRIM(s.subject), ''), 'Studio') AS subject, e.score
+         FROM study_oral_evaluations e
+         LEFT JOIN study_sessions s ON s.sessionid = e.sessionid AND s.userid = e.userid AND s.type = 'oral'
+         WHERE e.userid = $1 AND e.score IS NOT NULL
+       )
+       SELECT subject, GROUPING(subject) AS is_total,
+              COUNT(*)::int AS total_oral_evaluations,
               COUNT(*) FILTER (WHERE score >= 7)::int AS strong_orals,
               AVG(score)::float AS avg_oral_score
-       FROM study_oral_evaluations
-       WHERE userid = $1`,
+       FROM graded GROUP BY GROUPING SETS ((), (subject))
+       ORDER BY is_total DESC, subject NULLS LAST`,
       [userID]
     );
 
@@ -841,6 +848,9 @@ exports.getStudyStats = async (req, res) => {
       totalScientific: totals.total_scientific || 0,
       totalOral: totals.total_oral || 0,
       totalOralEvaluations: oral.total_oral_evaluations || 0,
+      oralBySubject: oralQ.rows.filter(row => row.is_total === 0).map(row => ({
+        subject: row.subject, count: row.total_oral_evaluations, average: row.avg_oral_score,
+      })),
       completedQuizzes: quizQ.rows[0].completed_quizzes,
       strongOrals: oral.strong_orals,
       avgOralScore: oral.avg_oral_score || 0,
